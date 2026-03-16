@@ -240,6 +240,22 @@ server.on("upgrade", (req, socket) => {
       const message = frame.payload.toString("utf8");
       console.log(`[message] ${clientAddress} ${message}`);
 
+      if (isBrowser && message === '[COMMAND] CLOSE_ALL_CLIENTS') {
+        let closedCount = 0;
+        clients.forEach((client, clientSocket) => {
+          try {
+            clientSocket.write(Buffer.from([0x88, 0x00]));
+            closedCount++;
+          } catch (e) {
+            console.error(`[error] Failed to close client ${client.id}: ${e.message}`);
+          }
+        });
+        const reply = `[COMMAND_RESULT] CLOSE_ALL_CLIENTS ${closedCount}`;
+        socket.write(encodeFrame(reply));
+        console.log(`[command] Closed ${closedCount} client(s)`);
+        continue;
+      }
+
       const reply = `Server received: ${message}`;
       socket.write(encodeFrame(reply));
 

@@ -18,11 +18,35 @@ body {
   background: #fff;
   padding: 20px;
   border-bottom: 1px solid #ddd;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .header h1 {
   font-size: 24px;
   font-weight: 500;
+}
+
+.close-all-button {
+  padding: 10px 20px;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.close-all-button:hover:not(:disabled) {
+  background: #c82333;
+}
+
+.close-all-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
 }
 
 .client-list {

@@ -54,6 +54,8 @@ ws.onmessage = (event) => {
       client.messages.push(msgContent);
       render();
     }
+  } else if (message.startsWith('[COMMAND_RESULT]')) {
+    console.log(`[command result] ${message}`);
   }
 };
 
@@ -63,6 +65,14 @@ ws.onopen = () => {
 
 ws.onerror = (error) => {
   console.error('WebSocket error:', error);
+};
+
+window.closeAllClients = () => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send('[COMMAND] CLOSE_ALL_CLIENTS');
+  } else {
+    console.error('WebSocket not connected');
+  }
 };
 
 function parseMessage(message) {
@@ -107,9 +117,17 @@ function formatDateTime(isoString) {
 }
 
 function renderHeader() {
+  const clientCount = state.clients.size;
   return `
     <div class="header">
       <h1>WebSocket 监控面板</h1>
+      <button
+        class="close-all-button"
+        onclick="window.closeAllClients()"
+        ${clientCount === 0 ? 'disabled' : ''}
+      >
+        关闭所有客户端 (${clientCount})
+      </button>
     </div>
   `;
 }
