@@ -1,6 +1,8 @@
 import './style.css';
 
-const WS_URL = 'ws://localhost:8080';
+// Dynamically determine WebSocket URL based on current page host
+// This works for both localhost (development) and remote access (mobile)
+const WS_URL = `ws://${window.location.host}`;
 
 const state = {
   clients: new Map(),
@@ -25,6 +27,7 @@ ws.onmessage = (event) => {
         messages: [],
       });
       render();
+      highlightNewClient(id);
     }
   } else if (message.startsWith('[DISCONNECT]')) {
     const payload = message.replace('[DISCONNECT] ', '');
@@ -52,7 +55,12 @@ ws.onmessage = (event) => {
     if (id && state.clients.has(id)) {
       const client = state.clients.get(id);
       client.messages.push(msgContent);
-      render();
+
+      if (state.currentRoute === 'detail' && state.currentClientId === id) {
+        addNewMessageWithAnimation(msgContent);
+      } else {
+        render();
+      }
     }
   } else if (message.startsWith('[COMMAND_RESULT]')) {
     console.log(`[command result] ${message}`);
@@ -60,11 +68,28 @@ ws.onmessage = (event) => {
 };
 
 ws.onopen = () => {
-  console.log('Connected to WebSocket server');
+  console.log(`[WebSocket] Connected to ${WS_URL}`);
 };
 
 ws.onerror = (error) => {
-  console.error('WebSocket error:', error);
+  console.error('[WebSocket] Connection error:', error);
+};
+
+ws.onclose = (event) => {
+  console.log(`[WebSocket] Disconnected (code: ${event.code}, reason: ${event.reason || 'unknown'})`);
+  // Attempt to reconnect after 3 seconds
+  setTimeout(() => {
+    console.log('[WebSocket] Attempting to reconnect...');
+    const newWs = new WebSocket(WS_URL);
+    newWs.onmessage = ws.onmessage;
+    newWs.onopen = ws.onopen;
+    newWs.onerror = ws.onerror;
+    newWs.onclose = ws.onclose;
+    newWs.onopen = () => {
+      window.ws = newWs;
+      console.log('[WebSocket] Reconnected successfully');
+    };
+  }, 3000);
 };
 
 window.closeAllClients = () => {
@@ -119,37 +144,44 @@ function formatDateTime(isoString) {
 function renderHeader() {
   const clientCount = state.clients.size;
   return `
-    <div class="header">
+    <header class="header" role="banner">
       <h1>WebSocket 监控面板</h1>
       <button
         class="close-all-button"
         onclick="window.closeAllClients()"
         ${clientCount === 0 ? 'disabled' : ''}
+        aria-label="关闭所有连接的客户端 (${clientCount})"
+        ${clientCount === 0 ? 'aria-disabled="true"' : ''}
       >
         关闭所有客户端 (${clientCount})
       </button>
-    </div>
+    </header>
   `;
 }
 
 function renderClientList() {
   const cards = Array.from(state.clients.values())
-    .map(client => `
-      <div class="client-card" onclick="window.navigate('${client.id}')">
+    .map((client, index) => `
+      <button
+        class="client-card"
+        onclick="window.navigate('${client.id}')"
+        aria-label="查看客户端 ${client.id} 的详细信息"
+        style="animation-delay: ${index * 0.05}s"
+      >
         <div class="client-id">${client.id}</div>
         <div class="client-info">
           <div>连接时间: ${formatDateTime(client.connectedAt)}</div>
           <div>IP 地址: ${client.ip}</div>
         </div>
-      </div>
+      </button>
     `)
     .join('');
 
   return `
     ${renderHeader()}
-    <div class="client-list">
-      ${cards || '<div style="grid-column: 1/-1; text-align: center; color: #999;">暂无连接的客户端</div>'}
-    </div>
+    <main class="client-list" role="main" aria-label="客户端列表">
+      ${cards || '<div class="empty-state" role="status" aria-live="polite">暂无连接的客户端</div>'}
+    </main>
   `;
 }
 
@@ -163,24 +195,24 @@ function renderClientDetail() {
   }
 
   const messageItems = client.messages
-    .map(msg => `<div class="message-item">${msg}</div>`)
+    .map((msg, index) => `<div class="message-item" style="animation-delay: ${index * 0.03}s">${msg}</div>`)
     .join('');
 
   return `
     ${renderHeader()}
-    <div class="client-detail">
+    <section class="client-detail" aria-label="客户端详情">
       <div class="client-detail-header">
-        <button class="back-button" onclick="window.navigateBack()">返回列表</button>
-        <div class="client-id">${client.id}</div>
+        <button class="back-button" onclick="window.navigateBack()" aria-label="返回客户端列表">返回列表</button>
+        <h2 class="client-id">${client.id}</h2>
         <div class="client-info">
           <div>连接时间: ${formatDateTime(client.connectedAt)}</div>
           <div>IP 地址: ${client.ip}</div>
         </div>
       </div>
-      <div class="message-list">
-        ${messageItems || '<div style="text-align: center; color: #999;">暂无消息</div>'}
+      <div class="message-list" id="messageList" role="log" aria-live="polite" aria-label="消息列表">
+        ${messageItems || '<div class="empty-state" role="status">暂无消息</div>'}
       </div>
-    </div>
+    </section>
   `;
 }
 
@@ -227,5 +259,47 @@ window.onpopstate = () => {
 
   render();
 };
+
+// Animation helper functions
+function highlightNewClient(clientId) {
+  setTimeout(() => {
+    const cards = document.querySelectorAll('.client-card');
+    cards.forEach(card => {
+      if (card.textContent.includes(clientId)) {
+        card.style.animation = 'none';
+        card.offsetHeight;
+        card.style.animation = 'newClientHighlight 0.8s ease';
+      }
+    });
+  }, 100);
+}
+
+function addNewMessageWithAnimation(content) {
+  const messageList = document.getElementById('messageList');
+  if (!messageList) return;
+
+  const emptyState = messageList.querySelector('.empty-state');
+  if (emptyState) {
+    emptyState.remove();
+  }
+
+  const messageItem = document.createElement('div');
+  messageItem.className = 'message-item';
+  messageItem.textContent = content;
+  messageItem.style.animation = 'messageSlideIn 0.3s ease';
+
+  messageList.appendChild(messageItem);
+  messageList.scrollTop = messageList.scrollHeight;
+}
+
+// Fix viewport height issue on mobile browsers
+function fixViewportHeight() {
+  const vh = window.innerHeight * 0.01;
+  document.documentElement.style.setProperty('--vh', `${vh}px`);
+}
+
+window.addEventListener('resize', fixViewportHeight);
+window.addEventListener('orientationchange', fixViewportHeight);
+fixViewportHeight();
 
 render();

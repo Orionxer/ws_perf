@@ -108,6 +108,9 @@ function encodeFrame(data) {
 }
 
 function serveStaticFile(req, res) {
+  const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
+  console.log(`[HTTP] ${req.method} ${req.url} from ${clientAddress}`);
+
   let filePath = path.join(STATIC_DIR, req.url === "/" ? "/index.html" : req.url);
 
   if (!path.isAbsolute(filePath)) {
@@ -119,11 +122,13 @@ function serveStaticFile(req, res) {
 
   fs.readFile(filePath, (err, data) => {
     if (err) {
+      console.log(`[HTTP] 404 Not Found: ${req.url} from ${clientAddress}`);
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not Found");
       return;
     }
 
+    console.log(`[HTTP] 200 OK: ${req.url} (${data.length} bytes) from ${clientAddress}`);
     res.writeHead(200, { "Content-Type": mimeType });
     res.end(data);
   });
@@ -140,7 +145,10 @@ server.on("upgrade", (req, socket) => {
   const websocketKey = req.headers["sec-websocket-key"];
   const upgradeHeader = req.headers.upgrade;
 
+  console.log(`[WebSocket upgrade] Attempt from ${req.socket.remoteAddress}:${req.socket.remotePort}`);
+
   if (!websocketKey || upgradeHeader?.toLowerCase() !== "websocket") {
+    console.log(`[WebSocket upgrade] Rejected - Invalid headers (key: ${!!websocketKey}, upgrade: ${upgradeHeader})`);
     socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
     socket.destroy();
     return;
@@ -158,19 +166,43 @@ server.on("upgrade", (req, socket) => {
 
   const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
   const userAgent = req.headers['user-agent'] || '';
-  const hasOrigin = req.headers['origin'] !== undefined;
+  const origin = req.headers['origin'];
+  const hasOrigin = origin !== undefined;
 
-  const isBrowser = hasOrigin && (
+  console.log(`[DEBUG] Connection from ${clientAddress}`);
+  console.log(`[DEBUG] User-Agent: ${userAgent}`);
+  console.log(`[DEBUG] Origin: ${origin}`);
+  console.log(`[DEBUG] All headers:`, Object.keys(req.headers));
+
+  // Improved browser detection for mobile devices
+  const isBrowser = (
     userAgent.includes('Mozilla') ||
-    userAgent.includes('Chrome') ||
-    userAgent.includes('Safari') ||
-    userAgent.includes('Firefox') ||
-    userAgent.includes('Edge')
-  ) && !userAgent.includes('node');
+    userAgent.includes('WebKit') ||
+    userAgent.includes('Gecko') ||
+    userAgent.includes('Trident')
+  ) && !userAgent.includes('node') &&
+    !userAgent.includes('curl') &&
+    !userAgent.includes('wget');
+
+  // Origin check is optional for mobile browsers (some don't send it)
+  // Only require Origin for desktop browsers
+  const isMobile = (
+    userAgent.includes('Mobile') ||
+    userAgent.includes('Android') ||
+    userAgent.includes('iPhone') ||
+    userAgent.includes('iPad') ||
+    userAgent.includes('iPod') ||
+    userAgent.includes('webOS') ||
+    userAgent.includes('BlackBerry')
+  );
+
+  const finalIsBrowser = isBrowser && (isMobile || hasOrigin);
+
+  console.log(`[DEBUG] isBrowser: ${isBrowser}, isMobile: ${isMobile}, hasOrigin: ${hasOrigin}, finalIsBrowser: ${finalIsBrowser}`);
 
   let clientId = null;
 
-  if (isBrowser) {
+  if (finalIsBrowser) {
     console.log(`[monitor connected] ${clientAddress}`);
     monitors.add(socket);
 
@@ -197,6 +229,7 @@ server.on("upgrade", (req, socket) => {
       try {
         monitor.write(encodeFrame(connectMsg));
       } catch (e) {
+        console.error(`[error] Failed to send CONNECT to monitor: ${e.message}`);
       }
     });
   }
@@ -240,7 +273,7 @@ server.on("upgrade", (req, socket) => {
       const message = frame.payload.toString("utf8");
       console.log(`[message] ${clientAddress} ${message}`);
 
-      if (isBrowser && message === '[COMMAND] CLOSE_ALL_CLIENTS') {
+      if (finalIsBrowser && message === '[COMMAND] CLOSE_ALL_CLIENTS') {
         let closedCount = 0;
         clients.forEach((client, clientSocket) => {
           try {
@@ -259,7 +292,7 @@ server.on("upgrade", (req, socket) => {
       const reply = `Server received: ${message}`;
       socket.write(encodeFrame(reply));
 
-      if (!isBrowser && clientId) {
+      if (!finalIsBrowser && clientId) {
         const client = clients.get(socket);
         if (client) {
           const messageMsg = `[MESSAGE] ${client.id}-${client.ip}: ${message}`;
@@ -267,6 +300,7 @@ server.on("upgrade", (req, socket) => {
             try {
               monitor.write(encodeFrame(messageMsg));
             } catch (e) {
+              console.error(`[error] Failed to send MESSAGE to monitor: ${e.message}`);
             }
           });
         }
@@ -277,7 +311,7 @@ server.on("upgrade", (req, socket) => {
   socket.on("close", () => {
     console.log(`[disconnected] ${clientAddress}`);
 
-    if (isBrowser) {
+    if (finalIsBrowser) {
       monitors.delete(socket);
       console.log(`[monitor disconnected] ${clientAddress}`);
     } else if (clientId) {
@@ -288,6 +322,7 @@ server.on("upgrade", (req, socket) => {
           try {
             monitor.write(encodeFrame(disconnectMsg));
           } catch (e) {
+            console.error(`[error] Failed to send DISCONNECT to monitor: ${e.message}`);
           }
         });
 
@@ -300,7 +335,7 @@ server.on("upgrade", (req, socket) => {
   socket.on("error", (error) => {
     console.error(`[socket error] ${clientAddress} ${error.message}`);
 
-    if (isBrowser) {
+    if (finalIsBrowser) {
       monitors.delete(socket);
     } else if (clientId) {
       const client = clients.get(socket);
@@ -310,6 +345,7 @@ server.on("upgrade", (req, socket) => {
           try {
             monitor.write(encodeFrame(disconnectMsg));
           } catch (e) {
+            console.error(`[error] Failed to send DISCONNECT to monitor: ${e.message}`);
           }
         });
 
