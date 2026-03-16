@@ -1,0 +1,10 @@
+{
+  "name": "ws-perf",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal WebSocket server in Node.js",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
