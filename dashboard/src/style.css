@@ -1,0 +1,116 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.header {
+  background: #fff;
+  padding: 20px;
+  border-bottom: 1px solid #ddd;
+}
+
+.header h1 {
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.client-list {
+  padding: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.client-card {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+
+.client-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.client-card .client-id {
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.client-card .client-info {
+  font-size: 14px;
+  color: #666;
+  line-height: 1.6;
+}
+
+.client-detail {
+  padding: 20px;
+}
+
+.client-detail-header {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.client-detail-header .back-button {
+  display: inline-block;
+  padding: 8px 16px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.client-detail-header .back-button:hover {
+  background: #f5f5f5;
+}
+
+.client-detail-header .client-id {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.client-detail-header .client-info {
+  font-size: 14px;
+  color: #666;
+}
+
+.message-list {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+}
+
+.message-item {
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 14px;
+}
+
+.message-item:last-child {
+  border-bottom: none;
+}

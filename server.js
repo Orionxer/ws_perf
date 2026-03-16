@@ -1,9 +1,23 @@
 const crypto = require("crypto");
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 
 const HOST = "0.0.0.0";
 const PORT = 8080;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const STATIC_DIR = path.join(__dirname, "dashboard", "dist");
+
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+};
 
 function createAcceptValue(websocketKey) {
   return crypto
@@ -93,9 +107,33 @@ function encodeFrame(data) {
   return Buffer.concat([header, payload]);
 }
 
+function serveStaticFile(req, res) {
+  let filePath = path.join(STATIC_DIR, req.url === "/" ? "/index.html" : req.url);
+
+  if (!path.isAbsolute(filePath)) {
+    filePath = path.resolve(filePath);
+  }
+
+  const ext = path.extname(filePath);
+  const mimeType = MIME_TYPES[ext] || "application/octet-stream";
+
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+
+    res.writeHead(200, { "Content-Type": mimeType });
+    res.end(data);
+  });
+}
+
+const clients = new Map();
+const monitors = new Set();
+
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end("WebSocket server is running.\n");
+  serveStaticFile(req, res);
 });
 
 server.on("upgrade", (req, socket) => {
@@ -119,7 +157,49 @@ server.on("upgrade", (req, socket) => {
   socket.write(`${responseHeaders.join("\r\n")}\r\n\r\n`);
 
   const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
-  console.log(`[connected] ${clientAddress}`);
+  const userAgent = req.headers['user-agent'] || '';
+  const hasOrigin = req.headers['origin'] !== undefined;
+
+  const isBrowser = hasOrigin && (
+    userAgent.includes('Mozilla') ||
+    userAgent.includes('Chrome') ||
+    userAgent.includes('Safari') ||
+    userAgent.includes('Firefox') ||
+    userAgent.includes('Edge')
+  ) && !userAgent.includes('node');
+
+  let clientId = null;
+
+  if (isBrowser) {
+    console.log(`[monitor connected] ${clientAddress}`);
+    monitors.add(socket);
+
+    clients.forEach((client) => {
+      const connectMsg = `[CONNECT] ${client.id}-${client.ip}`;
+      socket.write(encodeFrame(connectMsg));
+    });
+  } else {
+    clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const ip = req.socket.remoteAddress || 'unknown';
+    const connectedAt = new Date().toISOString();
+
+    clients.set(socket, {
+      id: clientId,
+      ip: ip,
+      socket: socket,
+      connectedAt: connectedAt
+    });
+
+    console.log(`[connected] ${clientAddress} (id: ${clientId})`);
+
+    const connectMsg = `[CONNECT] ${clientId}-${ip}`;
+    monitors.forEach(monitor => {
+      try {
+        monitor.write(encodeFrame(connectMsg));
+      } catch (e) {
+      }
+    });
+  }
 
   let buffered = Buffer.alloc(0);
 
@@ -162,15 +242,64 @@ server.on("upgrade", (req, socket) => {
 
       const reply = `Server received: ${message}`;
       socket.write(encodeFrame(reply));
+
+      if (!isBrowser && clientId) {
+        const client = clients.get(socket);
+        if (client) {
+          const messageMsg = `[MESSAGE] ${client.id}-${client.ip}: ${message}`;
+          monitors.forEach(monitor => {
+            try {
+              monitor.write(encodeFrame(messageMsg));
+            } catch (e) {
+            }
+          });
+        }
+      }
     }
   });
 
   socket.on("close", () => {
     console.log(`[disconnected] ${clientAddress}`);
+
+    if (isBrowser) {
+      monitors.delete(socket);
+      console.log(`[monitor disconnected] ${clientAddress}`);
+    } else if (clientId) {
+      const client = clients.get(socket);
+      if (client) {
+        const disconnectMsg = `[DISCONNECT] ${client.id}-${client.ip}`;
+        monitors.forEach(monitor => {
+          try {
+            monitor.write(encodeFrame(disconnectMsg));
+          } catch (e) {
+          }
+        });
+
+        clients.delete(socket);
+        console.log(`[client disconnected] ${clientId}`);
+      }
+    }
   });
 
   socket.on("error", (error) => {
     console.error(`[socket error] ${clientAddress} ${error.message}`);
+
+    if (isBrowser) {
+      monitors.delete(socket);
+    } else if (clientId) {
+      const client = clients.get(socket);
+      if (client) {
+        const disconnectMsg = `[DISCONNECT] ${client.id}-${client.ip}`;
+        monitors.forEach(monitor => {
+          try {
+            monitor.write(encodeFrame(disconnectMsg));
+          } catch (e) {
+          }
+        });
+
+        clients.delete(socket);
+      }
+    }
   });
 });
 
