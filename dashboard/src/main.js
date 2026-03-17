@@ -251,7 +251,10 @@ function renderClientDetail() {
     ${renderHeader()}
     <section class="client-detail" aria-label="客户端详情">
       <div class="client-detail-header">
-        <button class="back-button" onclick="window.navigateBack()" aria-label="返回客户端列表">返回列表</button>
+        <div class="header-actions">
+          <button class="back-button" onclick="window.navigateBack()" aria-label="返回客户端列表">返回列表</button>
+          <button class="upload-button" onclick="window.uploadVideo()" aria-label="上传视频">上传视频</button>
+        </div>
         <h2 class="client-id">${client.id}</h2>
         <div class="client-info">
           <div>连接时间: ${formatDateTime(client.connectedAt)}</div>
@@ -299,6 +302,10 @@ window.navigateBack = () => {
   state.currentRoute = 'list';
   state.currentClientId = null;
   render();
+};
+
+window.uploadVideo = () => {
+  console.log('Upload video clicked');
 };
 
 window.onpopstate = () => {
