@@ -1,5 +1,9 @@
 import './style.css';
 
+// SVG Icons for video player
+const PLAY_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M8 5v14l11-7z"/></svg>`;
+const PAUSE_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+
 // Dynamically determine WebSocket URL based on current page host
 // This works for both localhost (development) and remote access (mobile)
 const WS_URL = `ws://${window.location.host}`;
@@ -8,6 +12,7 @@ const state = {
   clients: new Map(),
   currentRoute: 'list',
   currentClientId: null,
+  videoAvailable: null,  // null = unchecked, true/false after HEAD check
 };
 
 const ws = new WebSocket(WS_URL);
@@ -141,6 +146,50 @@ function formatDateTime(isoString) {
   });
 }
 
+async function checkVideoAvailability() {
+  if (state.videoAvailable !== null) return state.videoAvailable;
+  try {
+    const response = await fetch('/resource/starship_11mb.mp4', { method: 'HEAD' });
+    state.videoAvailable = response.ok;
+  } catch {
+    state.videoAvailable = false;
+  }
+  return state.videoAvailable;
+}
+
+function renderVideoCard() {
+  if (state.videoAvailable === false) {
+    return `
+      <div class="video-card">
+        <div class="video-unavailable">No video available</div>
+      </div>
+    `;
+  }
+  if (state.videoAvailable === null) {
+    return `
+      <div class="video-card">
+        <div class="video-unavailable">Checking video...</div>
+      </div>
+    `;
+  }
+  return `
+    <div class="video-card">
+      <video class="video-player" id="videoPlayer" preload="metadata"
+        playsinline
+        webkit-playsinline
+        src="/resource/starship_11mb.mp4">
+      </video>
+      <div class="video-controls">
+        <button class="video-play-btn" id="videoPlayBtn" aria-label="Play video">${PLAY_ICON}</button>
+        <div class="video-progress" id="videoProgress">
+          <div class="video-progress-bar" id="videoProgressBar"></div>
+        </div>
+        <span class="video-time" id="videoTime">0:00</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderHeader() {
   const clientCount = state.clients.size;
   return `
@@ -209,6 +258,7 @@ function renderClientDetail() {
           <div>IP 地址: ${client.ip}</div>
         </div>
       </div>
+      ${renderVideoCard()}
       <div class="message-list" id="messageList" role="log" aria-live="polite" aria-label="消息列表">
         ${messageItems || '<div class="empty-state" role="status">暂无消息</div>'}
       </div>
@@ -223,6 +273,17 @@ function render() {
     app.innerHTML = renderClientList();
   } else if (state.currentRoute === 'detail' && state.currentClientId) {
     app.innerHTML = renderClientDetail();
+    initVideoPlayer();
+
+    // Check video availability on first load, then re-render if state changed
+    if (state.videoAvailable === null) {
+      checkVideoAvailability().then(() => {
+        if (state.currentRoute === 'detail') {
+          app.innerHTML = renderClientDetail();
+          initVideoPlayer();
+        }
+      });
+    }
   } else {
     app.innerHTML = renderClientList();
   }
@@ -290,6 +351,47 @@ function addNewMessageWithAnimation(content) {
 
   messageList.appendChild(messageItem);
   messageList.scrollTop = messageList.scrollHeight;
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m + ':' + s.toString().padStart(2, '0');
+}
+
+function initVideoPlayer() {
+  const video = document.getElementById('videoPlayer');
+  const playBtn = document.getElementById('videoPlayBtn');
+  const progressBar = document.getElementById('videoProgressBar');
+  const timeDisplay = document.getElementById('videoTime');
+
+  if (!video || !playBtn) return;
+
+  playBtn.addEventListener('click', () => {
+    if (video.paused) {
+      video.play();
+      playBtn.innerHTML = PAUSE_ICON;
+      playBtn.setAttribute('aria-label', 'Pause video');
+    } else {
+      video.pause();
+      playBtn.innerHTML = PLAY_ICON;
+      playBtn.setAttribute('aria-label', 'Play video');
+    }
+  });
+
+  video.addEventListener('timeupdate', () => {
+    if (video.duration) {
+      const pct = (video.currentTime / video.duration) * 100;
+      progressBar.style.width = pct + '%';
+      timeDisplay.textContent = formatTime(video.currentTime);
+    }
+  });
+
+  video.addEventListener('ended', () => {
+    playBtn.innerHTML = PLAY_ICON;
+    playBtn.setAttribute('aria-label', 'Play video');
+    progressBar.style.width = '0%';
+  });
 }
 
 // Fix viewport height issue on mobile browsers

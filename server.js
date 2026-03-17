@@ -17,6 +17,7 @@ const MIME_TYPES = {
   ".jpg": "image/jpeg",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
+  ".mp4": "video/mp4",
 };
 
 function createAcceptValue(websocketKey) {
@@ -111,7 +112,26 @@ function serveStaticFile(req, res) {
   const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
   console.log(`[HTTP] ${req.method} ${req.url} from ${clientAddress}`);
 
-  let filePath = path.join(STATIC_DIR, req.url === "/" ? "/index.html" : req.url);
+  let filePath;
+  let baseDir;
+
+  // Handle /resource/ paths
+  if (req.url.startsWith('/resource/')) {
+    baseDir = path.join(__dirname, 'resource');
+    filePath = path.join(baseDir, req.url.replace('/resource/', ''));
+    
+    // Path traversal guard
+    if (!filePath.startsWith(baseDir)) {
+      console.log(`[HTTP] 403 Forbidden: ${req.url} from ${clientAddress} (path traversal attempt)`);
+      res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Forbidden");
+      return;
+    }
+  } else {
+    // Existing logic for dashboard/dist/
+    baseDir = STATIC_DIR;
+    filePath = path.join(STATIC_DIR, req.url === "/" ? "/index.html" : req.url);
+  }
 
   if (!path.isAbsolute(filePath)) {
     filePath = path.resolve(filePath);
@@ -120,7 +140,8 @@ function serveStaticFile(req, res) {
   const ext = path.extname(filePath);
   const mimeType = MIME_TYPES[ext] || "application/octet-stream";
 
-  fs.readFile(filePath, (err, data) => {
+  // Get file stats for Range support and streaming
+  fs.stat(filePath, (err, stat) => {
     if (err) {
       console.log(`[HTTP] 404 Not Found: ${req.url} from ${clientAddress}`);
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -128,9 +149,61 @@ function serveStaticFile(req, res) {
       return;
     }
 
-    console.log(`[HTTP] 200 OK: ${req.url} (${data.length} bytes) from ${clientAddress}`);
-    res.writeHead(200, { "Content-Type": mimeType });
-    res.end(data);
+    const total = stat.size;
+    const range = req.headers.range;
+
+    // Handle Range requests (for mobile video streaming)
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+
+      if (isNaN(start) || isNaN(end) || start > end || start >= total) {
+        // 416 Range Not Satisfiable
+        res.writeHead(416, {
+          'Content-Range': `bytes */${total}`
+        });
+        res.end();
+        return;
+      }
+
+      const chunkSize = (end - start) + 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${total}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': mimeType
+      });
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.on('error', (streamErr) => {
+        console.error(`[HTTP] Stream error for ${req.url}: ${streamErr.message}`);
+        res.end();
+      });
+      stream.pipe(res);
+    } else {
+      // No range header: send full file with Accept-Ranges advertised
+      if (req.method === 'HEAD') {
+        res.writeHead(200, {
+          'Content-Length': total,
+          'Content-Type': mimeType,
+          'Accept-Ranges': 'bytes'
+        });
+        res.end();
+        return;
+      }
+
+      res.writeHead(200, {
+        'Content-Length': total,
+        'Content-Type': mimeType,
+        'Accept-Ranges': 'bytes'
+      });
+      const stream = fs.createReadStream(filePath);
+      stream.on('error', (streamErr) => {
+        console.error(`[HTTP] Stream error for ${req.url}: ${streamErr.message}`);
+        res.end();
+      });
+      stream.pipe(res);
+    }
   });
 }
 
