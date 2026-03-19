@@ -164,11 +164,16 @@ function isMonitorConnection(req) {
 function sendText(ws, message) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(message);
+    updateLastActivity(ws);
   }
 }
 
 function markConnectionAlive(ws) {
   ws.isAlive = true;
+}
+
+function updateLastActivity(ws) {
+  ws.lastActivity = Date.now();
 }
 
 function broadcastToMonitors(message) {
@@ -257,6 +262,8 @@ function finalizeUpload(client) {
 }
 
 function handleClientMessage(client, data, isBinary) {
+  updateLastActivity(client.ws);
+
   if (isBinary) {
     if (client.upload.isReceivingFile) {
       const chunkBuffer = Buffer.from(data);
@@ -342,6 +349,7 @@ wss.on("connection", (ws, req) => {
 
   if (monitorConnection) {
     monitors.add(ws);
+    ws.lastActivity = Date.now();
 
     for (const client of clientsById.values()) {
       sendText(ws, `[CONNECT] ${client.id}-${client.ip}`);
@@ -349,6 +357,7 @@ wss.on("connection", (ws, req) => {
     syncHeartbeatStatus(ws);
 
     ws.on("message", (data, isBinary) => {
+      updateLastActivity(ws);
       if (!isBinary) {
         handleMonitorMessage(ws, data);
       }
@@ -388,8 +397,9 @@ wss.on("connection", (ws, req) => {
 
   clientsById.set(client.id, client);
   clientsBySocket.set(ws, client);
+  ws.lastActivity = Date.now();
   broadcastToMonitors(`[CONNECT] ${client.id}-${client.ip}`);
-  console.log(`[connected] ${clientAddress} (id: ${client.id})`);
+  console.log(`[connected] ${clientAddress} (id: ${client.id})`); 
 
   ws.on("message", (data, isBinary) => {
     handleClientMessage(client, data, isBinary);
@@ -414,7 +424,16 @@ const heartbeatTimer = setInterval(() => {
     return;
   }
 
+  const now = Date.now();
+
   for (const monitor of monitors) {
+    const idleMs = now - (monitor.lastActivity || 0);
+
+    if (idleMs < HEARTBEAT_INTERVAL_MS) {
+      monitor.isAlive = true;
+      continue;
+    }
+
     if (monitor.isAlive === false) {
       console.log("[heartbeat timeout] monitor connection did not respond to ping in time");
       monitors.delete(monitor);
@@ -427,6 +446,13 @@ const heartbeatTimer = setInterval(() => {
   }
 
   for (const client of clientsById.values()) {
+    const idleMs = now - (client.ws.lastActivity || 0);
+
+    if (idleMs < HEARTBEAT_INTERVAL_MS) {
+      client.ws.isAlive = true;
+      continue;
+    }
+
     if (client.ws.isAlive === false) {
       console.log(`[heartbeat timeout] ${client.id} did not respond to ping in time`);
       removeClient(client, "heartbeat-timeout");
