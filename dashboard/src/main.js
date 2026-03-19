@@ -12,6 +12,7 @@ const state = {
   clients: new Map(),
   currentRoute: 'list',
   currentClientId: null,
+  heartbeatEnabled: true,
   videoAvailable: null,  // null = unchecked, true/false after HEAD check
   videoVersion: Date.now(),
   uploadStatus: {
@@ -27,6 +28,21 @@ const uiState = {
   renderedRoute: null,
   renderedClientId: null,
 };
+
+let ws = createSocket();
+
+function createSocket() {
+  const socket = new WebSocket(WS_URL);
+  socket.onmessage = handleSocketMessage;
+  socket.onopen = handleSocketOpen;
+  socket.onerror = handleSocketError;
+  socket.onclose = handleSocketClose;
+  return socket;
+}
+
+function getActiveSocket() {
+  return ws;
+}
 
 function setUploadStatus(clientId, tone, text, busy = false, html = '') {
   state.uploadStatus = {
@@ -48,6 +64,15 @@ function formatMegabytes(bytes) {
   return (bytes / (1024 * 1024)).toFixed(2);
 }
 
+function formatDuration(milliseconds) {
+  const durationMs = Number(milliseconds) || 0;
+  if (durationMs < 1000) {
+    return `${durationMs} ms`;
+  }
+
+  return `${(durationMs / 1000).toFixed(2)} s`;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -57,7 +82,7 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandwidthMbps }) {
+function buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandwidthMbps, uploadTimeMs }) {
   return `
     <div class="upload-status-title">上传成功</div>
     <div class="upload-status-grid">
@@ -66,19 +91,20 @@ function buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandw
         <span class="upload-status-value">${escapeHtml(mb)} MB</span>
         <span class="upload-status-subvalue">${escapeHtml(bytes)} 字节</span>
       </div>
-      <div class="upload-status-item">
-        <span class="upload-status-label">RTT</span>
-        <span class="upload-status-value">${escapeHtml(rttMs)} ms</span>
+      <div class="upload-status-item upload-status-item--hash">
+        <span class="upload-status-label">文件哈希</span>
+        <code class="upload-status-hash-code">${escapeHtml(sha256)}</code>
       </div>
       <div class="upload-status-item">
-        <span class="upload-status-label">Bandwidth</span>
+        <span class="upload-status-label">延迟</span>
+        <span class="upload-status-value">${escapeHtml(rttMs)} ms</span>
+        <span class="upload-status-subvalue">上传时间 ${escapeHtml(formatDuration(uploadTimeMs))}</span>
+      </div>
+      <div class="upload-status-item">
+        <span class="upload-status-label">带宽</span>
         <span class="upload-status-value">${escapeHtml(bandwidthMBps)} MB/s</span>
         <span class="upload-status-subvalue">${escapeHtml(bandwidthMbps)} Mbps</span>
       </div>
-    </div>
-    <div class="upload-status-hash">
-      <span class="upload-status-label">文件哈希</span>
-      <code>${escapeHtml(sha256)}</code>
     </div>
   `;
 }
@@ -115,9 +141,7 @@ function refreshUploadStatusUI() {
   return true;
 }
 
-const ws = new WebSocket(WS_URL);
-
-ws.onmessage = (event) => {
+function handleSocketMessage(event) {
   const message = event.data;
 
   if (message.startsWith('[CONNECT]')) {
@@ -174,7 +198,7 @@ ws.onmessage = (event) => {
       client.messages.push(msgContent);
 
       if (msgContent === '/file_start') {
-        setUploadStatus(id, 'progress', `客户端上传视频中：已接收 0 字节，${formatMegabytes(0)} MB`, true);
+        setUploadStatus(id, 'progress', `上传中：已接收 0 字节，${formatMegabytes(0)} MB`, true);
       } else if (msgContent === '/file_end') {
         setUploadStatus(id, 'progress', '视频上传完成，服务端正在保存...', true);
       }
@@ -194,7 +218,7 @@ ws.onmessage = (event) => {
     } else if (message.startsWith('[COMMAND_RESULT] UPLOAD_VIDEO_PROGRESS')) {
       const payload = message.replace('[COMMAND_RESULT] UPLOAD_VIDEO_PROGRESS ', '');
       const [clientId, bytes = '0', mb = '0.00'] = payload.split(' ');
-      setUploadStatus(clientId, 'progress', `客户端上传视频中：已接收 ${bytes} 字节，${mb} MB`, true);
+      setUploadStatus(clientId, 'progress', `上传中：已接收 ${bytes} 字节，${mb} MB`, true);
     } else if (message.startsWith('[COMMAND_RESULT] UPLOAD_VIDEO_SAVED')) {
       const payload = message.replace('[COMMAND_RESULT] UPLOAD_VIDEO_SAVED ', '');
       const [
@@ -205,15 +229,16 @@ ws.onmessage = (event) => {
         rttMs = '0',
         bandwidthMBps = '0.00',
         bandwidthMbps = '0.00',
+        uploadTimeMs = '0',
       ] = payload.split(' ');
       state.videoAvailable = true;
       state.videoVersion = Date.now();
       setUploadStatus(
         clientId,
         'success',
-        `上传成功：文件大小 ${mb} MB（${bytes} 字节） | 文件哈希 ${sha256}\nRTT ${rttMs} ms | Bandwidth ${bandwidthMBps} MB/s (${bandwidthMbps} Mbps)`,
+        `上传成功：文件大小 ${mb} MB（${bytes} 字节） | 文件哈希 ${sha256}\nRTT ${rttMs} ms | 上传时间 ${formatDuration(uploadTimeMs)} | Bandwidth ${bandwidthMBps} MB/s (${bandwidthMbps} Mbps)`,
         false,
-        buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandwidthMbps }),
+        buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandwidthMbps, uploadTimeMs }),
       );
 
       if (state.currentRoute === 'detail' && state.currentClientId === clientId) {
@@ -227,37 +252,43 @@ ws.onmessage = (event) => {
         : `上传失败：${reason}`;
       setUploadStatus(clientId, 'error', text, false);
     }
+  } else if (message.startsWith('[SYSTEM] HEARTBEAT ')) {
+    state.heartbeatEnabled = message.endsWith('ON');
+    refreshHeaderUI();
   }
-};
+}
 
-ws.onopen = () => {
+function handleSocketOpen() {
   console.log(`[WebSocket] Connected to ${WS_URL}`);
-};
+}
 
-ws.onerror = (error) => {
+function handleSocketError(error) {
   console.error('[WebSocket] Connection error:', error);
-};
+}
 
-ws.onclose = (event) => {
+function handleSocketClose(event) {
   console.log(`[WebSocket] Disconnected (code: ${event.code}, reason: ${event.reason || 'unknown'})`);
   // Attempt to reconnect after 3 seconds
   setTimeout(() => {
     console.log('[WebSocket] Attempting to reconnect...');
-    const newWs = new WebSocket(WS_URL);
-    newWs.onmessage = ws.onmessage;
-    newWs.onopen = ws.onopen;
-    newWs.onerror = ws.onerror;
-    newWs.onclose = ws.onclose;
-    newWs.onopen = () => {
-      window.ws = newWs;
-      console.log('[WebSocket] Reconnected successfully');
-    };
+    ws = createSocket();
+    window.ws = ws;
   }, 3000);
-};
+}
 
 window.closeAllClients = () => {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send('[COMMAND] CLOSE_ALL_CLIENTS');
+  const socket = getActiveSocket();
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send('[COMMAND] CLOSE_ALL_CLIENTS');
+  } else {
+    console.error('WebSocket not connected');
+  }
+};
+
+window.toggleHeartbeat = () => {
+  const socket = getActiveSocket();
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send('[COMMAND] TOGGLE_HEARTBEAT');
   } else {
     console.error('WebSocket not connected');
   }
@@ -350,19 +381,39 @@ function renderVideoCard() {
 
 function renderHeader() {
   const clientCount = state.clients.size;
+  const heartbeatLabel = state.heartbeatEnabled ? '关闭心跳检测' : '启用心跳检测';
+  const heartbeatButtonClass = state.heartbeatEnabled
+    ? 'heartbeat-toggle-button heartbeat-toggle-button--active'
+    : 'heartbeat-toggle-button';
   return `
     <header class="header" role="banner">
-      <h1>WebSocket 监控面板</h1>
-      <button
-        id="closeAllButton"
-        class="close-all-button"
-        onclick="window.closeAllClients()"
-        ${clientCount === 0 ? 'disabled' : ''}
-        aria-label="关闭所有连接的客户端 (${clientCount})"
-        ${clientCount === 0 ? 'aria-disabled="true"' : ''}
-      >
-        关闭所有客户端 (${clientCount})
-      </button>
+      <div class="header-title-group">
+        <h1>WebSocket 监控面板</h1>
+        <div class="client-count-badge" id="clientCountBadge" aria-live="polite">
+          在线客户端 ${clientCount}
+        </div>
+      </div>
+      <div class="header-actions">
+        <button
+          id="heartbeatToggleButton"
+          class="${heartbeatButtonClass}"
+          onclick="window.toggleHeartbeat()"
+          aria-label="${heartbeatLabel}"
+          aria-pressed="${state.heartbeatEnabled ? 'true' : 'false'}"
+        >
+          ${heartbeatLabel}
+        </button>
+        <button
+          id="closeAllButton"
+          class="close-all-button"
+          onclick="window.closeAllClients()"
+          ${clientCount === 0 ? 'disabled' : ''}
+          aria-label="关闭所有连接的客户端"
+          ${clientCount === 0 ? 'aria-disabled="true"' : ''}
+        >
+          关闭所有客户端
+        </button>
+      </div>
     </header>
   `;
 }
@@ -440,15 +491,26 @@ function renderClientDetail() {
 }
 
 function refreshHeaderUI() {
+  const clientCountBadge = document.getElementById('clientCountBadge');
+  const heartbeatButton = document.getElementById('heartbeatToggleButton');
   const button = document.getElementById('closeAllButton');
-  if (!button) {
+  if (!button || !heartbeatButton || !clientCountBadge) {
     return false;
   }
 
+  const heartbeatLabel = state.heartbeatEnabled ? '关闭心跳检测' : '启用心跳检测';
+  heartbeatButton.textContent = heartbeatLabel;
+  heartbeatButton.className = state.heartbeatEnabled
+    ? 'heartbeat-toggle-button heartbeat-toggle-button--active'
+    : 'heartbeat-toggle-button';
+  heartbeatButton.setAttribute('aria-label', heartbeatLabel);
+  heartbeatButton.setAttribute('aria-pressed', state.heartbeatEnabled ? 'true' : 'false');
+
   const clientCount = state.clients.size;
-  button.textContent = `关闭所有客户端 (${clientCount})`;
+  clientCountBadge.textContent = `在线客户端 ${clientCount}`;
+  button.textContent = '关闭所有客户端';
   button.disabled = clientCount === 0;
-  button.setAttribute('aria-label', `关闭所有连接的客户端 (${clientCount})`);
+  button.setAttribute('aria-label', '关闭所有连接的客户端');
   button.setAttribute('aria-disabled', clientCount === 0 ? 'true' : 'false');
   return true;
 }
@@ -518,13 +580,14 @@ window.navigateBack = () => {
 
 window.uploadVideo = () => {
   const currentClientId = state.currentClientId;
+  const socket = getActiveSocket();
 
   if (!currentClientId) {
     console.error('No client selected for video upload');
     return;
   }
 
-  if (ws.readyState !== WebSocket.OPEN) {
+  if (socket.readyState !== WebSocket.OPEN) {
     console.error('WebSocket not connected');
     return;
   }
@@ -534,7 +597,7 @@ window.uploadVideo = () => {
   setUploadStatus(currentClientId, 'progress', '正在向客户端发送上传指令...', true);
   refreshVideoCardUI();
 
-  ws.send(`[COMMAND] UPLOAD_VIDEO ${currentClientId}`);
+  socket.send(`[COMMAND] UPLOAD_VIDEO ${currentClientId}`);
 };
 
 window.onpopstate = () => {

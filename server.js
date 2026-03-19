@@ -6,6 +6,7 @@ const WebSocket = require("ws");
 
 const HOST = "0.0.0.0";
 const PORT = 8080;
+const HEARTBEAT_INTERVAL_MS = 10000;
 const STATIC_DIR = path.join(__dirname, "dashboard", "dist");
 const RESOURCE_DIR = path.join(__dirname, "resource");
 const VIDEO_FILE_NAME = "starship.mp4";
@@ -127,6 +128,7 @@ function serveStaticFile(req, res) {
 const clientsById = new Map();
 const clientsBySocket = new Map();
 const monitors = new Set();
+let heartbeatEnabled = true;
 
 function makeClientId() {
   return `client_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
@@ -165,10 +167,24 @@ function sendText(ws, message) {
   }
 }
 
+function markConnectionAlive(ws) {
+  ws.isAlive = true;
+}
+
 function broadcastToMonitors(message) {
   for (const monitor of monitors) {
     sendText(monitor, message);
   }
+}
+
+function syncHeartbeatStatus(targetWs = null) {
+  const message = `[SYSTEM] HEARTBEAT ${heartbeatEnabled ? "ON" : "OFF"}`;
+  if (targetWs) {
+    sendText(targetWs, message);
+    return;
+  }
+
+  broadcastToMonitors(message);
 }
 
 function removeClient(client, reason = "disconnect") {
@@ -233,7 +249,7 @@ function finalizeUpload(client) {
 
   sendText(client.ws, "/file_received");
   broadcastToMonitors(`[MESSAGE] ${client.id}-${client.ip}: /file_end`);
-  broadcastToMonitors(`[COMMAND_RESULT] UPLOAD_VIDEO_SAVED ${client.id} ${fileBuffer.length} ${fileSizeMB.toFixed(2)} ${sha256} ${rttMs} ${bandwidthMBps.toFixed(2)} ${bandwidthMbps.toFixed(2)}`);
+  broadcastToMonitors(`[COMMAND_RESULT] UPLOAD_VIDEO_SAVED ${client.id} ${fileBuffer.length} ${fileSizeMB.toFixed(2)} ${sha256} ${rttMs} ${bandwidthMBps.toFixed(2)} ${bandwidthMbps.toFixed(2)} ${transferDurationMs}`);
 
   client.upload.fileBuffer = [];
   client.upload.isReceivingFile = false;
@@ -297,6 +313,14 @@ function handleMonitorMessage(ws, rawMessage) {
     return;
   }
 
+  if (message === "[COMMAND] TOGGLE_HEARTBEAT") {
+    heartbeatEnabled = !heartbeatEnabled;
+    syncHeartbeatStatus();
+    sendText(ws, `[COMMAND_RESULT] HEARTBEAT_${heartbeatEnabled ? "ENABLED" : "DISABLED"}`);
+    console.log(`[command] Heartbeat detection ${heartbeatEnabled ? "enabled" : "disabled"}`);
+    return;
+  }
+
   if (message.startsWith("[COMMAND] UPLOAD_VIDEO ")) {
     const targetClientId = message.replace("[COMMAND] UPLOAD_VIDEO ", "").trim();
     handleUploadCommand(ws, targetClientId);
@@ -312,6 +336,7 @@ const wss = new WebSocket.Server({ noServer: true });
 wss.on("connection", (ws, req) => {
   const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
   const monitorConnection = isMonitorConnection(req);
+  markConnectionAlive(ws);
 
   console.log(`[WebSocket] Connection from ${clientAddress} (${monitorConnection ? "monitor" : "client"})`);
 
@@ -321,6 +346,7 @@ wss.on("connection", (ws, req) => {
     for (const client of clientsById.values()) {
       sendText(ws, `[CONNECT] ${client.id}-${client.ip}`);
     }
+    syncHeartbeatStatus(ws);
 
     ws.on("message", (data, isBinary) => {
       if (!isBinary) {
@@ -331,6 +357,10 @@ wss.on("connection", (ws, req) => {
     ws.on("close", () => {
       monitors.delete(ws);
       console.log(`[monitor disconnected] ${clientAddress}`);
+    });
+
+    ws.on("pong", () => {
+      markConnectionAlive(ws);
     });
 
     ws.on("error", (error) => {
@@ -369,10 +399,48 @@ wss.on("connection", (ws, req) => {
     removeClient(client);
   });
 
+  ws.on("pong", () => {
+    markConnectionAlive(ws);
+  });
+
   ws.on("error", (error) => {
     console.error(`[client error] ${client.id} ${error.message}`);
     removeClient(client, "error");
   });
+});
+
+const heartbeatTimer = setInterval(() => {
+  if (!heartbeatEnabled) {
+    return;
+  }
+
+  for (const monitor of monitors) {
+    if (monitor.isAlive === false) {
+      console.log("[heartbeat timeout] monitor connection did not respond to ping in time");
+      monitors.delete(monitor);
+      monitor.terminate();
+      continue;
+    }
+
+    monitor.isAlive = false;
+    monitor.ping();
+  }
+
+  for (const client of clientsById.values()) {
+    if (client.ws.isAlive === false) {
+      console.log(`[heartbeat timeout] ${client.id} did not respond to ping in time`);
+      removeClient(client, "heartbeat-timeout");
+      client.ws.terminate();
+      continue;
+    }
+
+    client.ws.isAlive = false;
+    client.ws.ping();
+  }
+}, HEARTBEAT_INTERVAL_MS);
+
+wss.on("close", () => {
+  clearInterval(heartbeatTimer);
 });
 
 server.on("upgrade", (req, socket, head) => {
