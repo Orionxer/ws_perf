@@ -387,6 +387,13 @@ body::after {
   transition: all var(--transition-base);
 }
 
+.client-detail-header .upload-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
 .client-detail-header .upload-button:active {
   background: var(--accent-primary);
   color: #000;
@@ -431,6 +438,96 @@ body::after {
   content: '▸';
   color: var(--accent-secondary);
   font-size: 12px;
+}
+
+.upload-status {
+  margin-top: var(--space-md);
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-line;
+  animation: fadeIn 0.2s ease;
+}
+
+.upload-status-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  margin-bottom: 10px;
+}
+
+.upload-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.upload-status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.upload-status-label {
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.upload-status-value {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.upload-status-subvalue {
+  font-size: 12px;
+  opacity: 0.78;
+}
+
+.upload-status-hash {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upload-status-hash code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.6;
+  word-break: break-all;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.upload-status--progress {
+  background: rgba(0, 212, 255, 0.08);
+  border-color: rgba(0, 212, 255, 0.35);
+  color: var(--accent-secondary);
+}
+
+.upload-status--success {
+  background: rgba(0, 255, 136, 0.08);
+  border-color: rgba(0, 255, 136, 0.35);
+  color: var(--accent-primary);
+}
+
+.upload-status--error {
+  background: rgba(255, 92, 92, 0.08);
+  border-color: rgba(255, 92, 92, 0.35);
+  color: #ff9a9a;
 }
 
 /* Message List */

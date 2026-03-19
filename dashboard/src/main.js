@@ -13,7 +13,102 @@ const state = {
   currentRoute: 'list',
   currentClientId: null,
   videoAvailable: null,  // null = unchecked, true/false after HEAD check
+  videoVersion: Date.now(),
+  uploadStatus: {
+    clientId: null,
+    tone: 'idle',
+    text: '',
+    html: '',
+    busy: false,
+  },
 };
+
+function setUploadStatus(clientId, tone, text, busy = false, html = '') {
+  state.uploadStatus = {
+    clientId,
+    tone,
+    text,
+    html,
+    busy,
+  };
+
+  if (state.currentRoute === 'detail' && state.currentClientId === clientId) {
+    if (!refreshUploadStatusUI()) {
+      render();
+    }
+  }
+}
+
+function formatMegabytes(bytes) {
+  return (bytes / (1024 * 1024)).toFixed(2);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandwidthMbps }) {
+  return `
+    <div class="upload-status-title">上传成功</div>
+    <div class="upload-status-grid">
+      <div class="upload-status-item">
+        <span class="upload-status-label">文件大小</span>
+        <span class="upload-status-value">${escapeHtml(mb)} MB</span>
+        <span class="upload-status-subvalue">${escapeHtml(bytes)} 字节</span>
+      </div>
+      <div class="upload-status-item">
+        <span class="upload-status-label">RTT</span>
+        <span class="upload-status-value">${escapeHtml(rttMs)} ms</span>
+      </div>
+      <div class="upload-status-item">
+        <span class="upload-status-label">Bandwidth</span>
+        <span class="upload-status-value">${escapeHtml(bandwidthMBps)} MB/s</span>
+        <span class="upload-status-subvalue">${escapeHtml(bandwidthMbps)} Mbps</span>
+      </div>
+    </div>
+    <div class="upload-status-hash">
+      <span class="upload-status-label">文件哈希</span>
+      <code>${escapeHtml(sha256)}</code>
+    </div>
+  `;
+}
+
+function refreshUploadStatusUI() {
+  const statusNode = document.getElementById('uploadStatus');
+  const buttonNode = document.getElementById('uploadButton');
+
+  if (!statusNode || !buttonNode || state.currentRoute !== 'detail' || !state.currentClientId) {
+    return false;
+  }
+
+  const uploadStatus = state.uploadStatus.clientId === state.currentClientId ? state.uploadStatus : null;
+
+  buttonNode.textContent = uploadStatus?.busy ? '上传中...' : '上传视频';
+  buttonNode.disabled = Boolean(uploadStatus?.busy);
+  buttonNode.setAttribute('aria-disabled', uploadStatus?.busy ? 'true' : 'false');
+
+  if (uploadStatus?.text) {
+    statusNode.className = `upload-status upload-status--${uploadStatus.tone}`;
+    if (uploadStatus.html) {
+      statusNode.innerHTML = uploadStatus.html;
+    } else {
+      statusNode.textContent = uploadStatus.text;
+    }
+    statusNode.hidden = false;
+  } else {
+    statusNode.textContent = '';
+    statusNode.innerHTML = '';
+    statusNode.className = 'upload-status';
+    statusNode.hidden = true;
+  }
+
+  return true;
+}
 
 const ws = new WebSocket(WS_URL);
 
@@ -61,6 +156,12 @@ ws.onmessage = (event) => {
       const client = state.clients.get(id);
       client.messages.push(msgContent);
 
+      if (msgContent === '/file_start') {
+        setUploadStatus(id, 'progress', `客户端上传视频中：已接收 0 字节，${formatMegabytes(0)} MB`, true);
+      } else if (msgContent === '/file_end') {
+        setUploadStatus(id, 'progress', '视频上传完成，服务端正在保存...', true);
+      }
+
       if (state.currentRoute === 'detail' && state.currentClientId === id) {
         addNewMessageWithAnimation(msgContent);
       } else {
@@ -69,6 +170,48 @@ ws.onmessage = (event) => {
     }
   } else if (message.startsWith('[COMMAND_RESULT]')) {
     console.log(`[command result] ${message}`);
+
+    if (message.startsWith('[COMMAND_RESULT] UPLOAD_VIDEO_REQUESTED')) {
+      const clientId = message.replace('[COMMAND_RESULT] UPLOAD_VIDEO_REQUESTED ', '').trim();
+      state.videoAvailable = false;
+      state.videoVersion = Date.now();
+      setUploadStatus(clientId, 'progress', '已发送上传指令，等待客户端开始传输...', true);
+    } else if (message.startsWith('[COMMAND_RESULT] UPLOAD_VIDEO_PROGRESS')) {
+      const payload = message.replace('[COMMAND_RESULT] UPLOAD_VIDEO_PROGRESS ', '');
+      const [clientId, bytes = '0', mb = '0.00'] = payload.split(' ');
+      setUploadStatus(clientId, 'progress', `客户端上传视频中：已接收 ${bytes} 字节，${mb} MB`, true);
+    } else if (message.startsWith('[COMMAND_RESULT] UPLOAD_VIDEO_SAVED')) {
+      const payload = message.replace('[COMMAND_RESULT] UPLOAD_VIDEO_SAVED ', '');
+      const [
+        clientId,
+        bytes = '0',
+        mb = '0.00',
+        sha256 = '-',
+        rttMs = '0',
+        bandwidthMBps = '0.00',
+        bandwidthMbps = '0.00',
+      ] = payload.split(' ');
+      state.videoAvailable = true;
+      state.videoVersion = Date.now();
+      setUploadStatus(
+        clientId,
+        'success',
+        `上传成功：文件大小 ${mb} MB（${bytes} 字节） | 文件哈希 ${sha256}\nRTT ${rttMs} ms | Bandwidth ${bandwidthMBps} MB/s (${bandwidthMbps} Mbps)`,
+        false,
+        buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandwidthMbps }),
+      );
+
+      if (state.currentRoute === 'detail' && state.currentClientId === clientId) {
+        render();
+      }
+    } else if (message.startsWith('[COMMAND_RESULT] UPLOAD_VIDEO_FAILED')) {
+      const payload = message.replace('[COMMAND_RESULT] UPLOAD_VIDEO_FAILED ', '');
+      const [clientId, reason = 'UNKNOWN_ERROR'] = payload.split(' ');
+      const text = reason === 'CLIENT_NOT_FOUND'
+        ? '上传失败：目标客户端已断开连接。'
+        : `上传失败：${reason}`;
+      setUploadStatus(clientId, 'error', text, false);
+    }
   }
 };
 
@@ -177,7 +320,7 @@ function renderVideoCard() {
       <video class="video-player" id="videoPlayer" preload="metadata"
         playsinline
         webkit-playsinline
-        src="/resource/starship.mp4">
+        src="/resource/starship.mp4?v=${state.videoVersion}">
       </video>
       <div class="video-controls">
         <button class="video-play-btn" id="videoPlayBtn" aria-label="Play video">${PLAY_ICON}</button>
@@ -246,6 +389,11 @@ function renderClientDetail() {
   const messageItems = client.messages
     .map((msg, index) => `<div class="message-item" style="animation-delay: ${index * 0.03}s">${msg}</div>`)
     .join('');
+  const uploadStatus = state.uploadStatus.clientId === client.id ? state.uploadStatus : null;
+  const uploadButtonLabel = uploadStatus?.busy ? '上传中...' : '上传视频';
+  const uploadStatusMarkup = uploadStatus?.text
+    ? `<div class="upload-status upload-status--${uploadStatus.tone}" id="uploadStatus" role="status" aria-live="polite">${uploadStatus.html || uploadStatus.text}</div>`
+    : '<div class="upload-status" id="uploadStatus" role="status" aria-live="polite" hidden></div>';
 
   return `
     ${renderHeader()}
@@ -253,13 +401,14 @@ function renderClientDetail() {
       <div class="client-detail-header">
         <div class="header-actions">
           <button class="back-button" onclick="window.navigateBack()" aria-label="返回客户端列表">返回列表</button>
-          <button class="upload-button" onclick="window.uploadVideo()" aria-label="上传视频">上传视频</button>
+          <button class="upload-button" id="uploadButton" onclick="window.uploadVideo()" aria-label="上传视频" ${uploadStatus?.busy ? 'disabled aria-disabled="true"' : ''}>${uploadButtonLabel}</button>
         </div>
         <h2 class="client-id">${client.id}</h2>
         <div class="client-info">
           <div>连接时间: ${formatDateTime(client.connectedAt)}</div>
           <div>IP 地址: ${client.ip}</div>
         </div>
+        ${uploadStatusMarkup}
       </div>
       ${renderVideoCard()}
       <div class="message-list" id="messageList" role="log" aria-live="polite" aria-label="消息列表">
@@ -305,7 +454,24 @@ window.navigateBack = () => {
 };
 
 window.uploadVideo = () => {
-  console.log('Upload video clicked');
+  const currentClientId = state.currentClientId;
+
+  if (!currentClientId) {
+    console.error('No client selected for video upload');
+    return;
+  }
+
+  if (ws.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket not connected');
+    return;
+  }
+
+  state.videoAvailable = false;
+  state.videoVersion = Date.now();
+  setUploadStatus(currentClientId, 'progress', '正在向客户端发送上传指令...', true);
+  render();
+
+  ws.send(`[COMMAND] UPLOAD_VIDEO ${currentClientId}`);
 };
 
 window.onpopstate = () => {

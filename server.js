@@ -1,12 +1,15 @@
-const crypto = require("crypto");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
+const WebSocket = require("ws");
 
 const HOST = "0.0.0.0";
 const PORT = 8080;
-const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const STATIC_DIR = path.join(__dirname, "dashboard", "dist");
+const RESOURCE_DIR = path.join(__dirname, "resource");
+const VIDEO_FILE_NAME = "starship.mp4";
+const VIDEO_FILE_PATH = path.join(RESOURCE_DIR, VIDEO_FILE_NAME);
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -20,107 +23,23 @@ const MIME_TYPES = {
   ".mp4": "video/mp4",
 };
 
-function createAcceptValue(websocketKey) {
-  return crypto
-    .createHash("sha1")
-    .update(websocketKey + WS_GUID, "binary")
-    .digest("base64");
-}
-
-function decodeFrame(buffer) {
-  if (buffer.length < 2) {
-    return null;
-  }
-
-  const firstByte = buffer[0];
-  const secondByte = buffer[1];
-  const opcode = firstByte & 0x0f;
-  const isMasked = (secondByte & 0x80) === 0x80;
-  let payloadLength = secondByte & 0x7f;
-  let offset = 2;
-
-  if (payloadLength === 126) {
-    if (buffer.length < offset + 2) {
-      return null;
-    }
-
-    payloadLength = buffer.readUInt16BE(offset);
-    offset += 2;
-  } else if (payloadLength === 127) {
-    if (buffer.length < offset + 8) {
-      return null;
-    }
-
-    const bigLength = buffer.readBigUInt64BE(offset);
-    if (bigLength > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new Error("Payload too large");
-    }
-
-    payloadLength = Number(bigLength);
-    offset += 8;
-  }
-
-  const maskLength = isMasked ? 4 : 0;
-  const frameLength = offset + maskLength + payloadLength;
-  if (buffer.length < frameLength) {
-    return null;
-  }
-
-  let payload = buffer.subarray(offset + maskLength, frameLength);
-  if (isMasked) {
-    const mask = buffer.subarray(offset, offset + 4);
-    const decoded = Buffer.alloc(payloadLength);
-
-    for (let i = 0; i < payloadLength; i += 1) {
-      decoded[i] = payload[i] ^ mask[i % 4];
-    }
-
-    payload = decoded;
-  }
-
-  return {
-    frameLength,
-    opcode,
-    payload
-  };
-}
-
-function encodeFrame(data) {
-  const payload = Buffer.from(data, "utf8");
-  const payloadLength = payload.length;
-
-  if (payloadLength < 126) {
-    return Buffer.concat([Buffer.from([0x81, payloadLength]), payload]);
-  }
-
-  if (payloadLength < 65536) {
-    const header = Buffer.alloc(4);
-    header[0] = 0x81;
-    header[1] = 126;
-    header.writeUInt16BE(payloadLength, 2);
-    return Buffer.concat([header, payload]);
-  }
-
-  const header = Buffer.alloc(10);
-  header[0] = 0x81;
-  header[1] = 127;
-  header.writeBigUInt64BE(BigInt(payloadLength), 2);
-  return Buffer.concat([header, payload]);
+if (!fs.existsSync(RESOURCE_DIR)) {
+  fs.mkdirSync(RESOURCE_DIR, { recursive: true });
 }
 
 function serveStaticFile(req, res) {
   const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
   console.log(`[HTTP] ${req.method} ${req.url} from ${clientAddress}`);
+  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const pathname = requestUrl.pathname;
 
   let filePath;
   let baseDir;
 
-  // Handle /resource/ paths
-  if (req.url.startsWith('/resource/')) {
-    baseDir = path.join(__dirname, 'resource');
-    filePath = path.join(baseDir, req.url.replace('/resource/', ''));
-    
-    // Path traversal guard
+  if (pathname.startsWith("/resource/")) {
+    baseDir = RESOURCE_DIR;
+    filePath = path.join(baseDir, pathname.replace("/resource/", ""));
+
     if (!filePath.startsWith(baseDir)) {
       console.log(`[HTTP] 403 Forbidden: ${req.url} from ${clientAddress} (path traversal attempt)`);
       res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
@@ -128,9 +47,8 @@ function serveStaticFile(req, res) {
       return;
     }
   } else {
-    // Existing logic for dashboard/dist/
     baseDir = STATIC_DIR;
-    filePath = path.join(STATIC_DIR, req.url === "/" ? "/index.html" : req.url);
+    filePath = path.join(STATIC_DIR, pathname === "/" ? "/index.html" : pathname);
   }
 
   if (!path.isAbsolute(filePath)) {
@@ -140,7 +58,6 @@ function serveStaticFile(req, res) {
   const ext = path.extname(filePath);
   const mimeType = MIME_TYPES[ext] || "application/octet-stream";
 
-  // Get file stats for Range support and streaming
   fs.stat(filePath, (err, stat) => {
     if (err) {
       console.log(`[HTTP] 404 Not Found: ${req.url} from ${clientAddress}`);
@@ -152,16 +69,14 @@ function serveStaticFile(req, res) {
     const total = stat.size;
     const range = req.headers.range;
 
-    // Handle Range requests (for mobile video streaming)
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
+      const start = Number.parseInt(parts[0], 10);
+      const end = parts[1] ? Number.parseInt(parts[1], 10) : total - 1;
 
-      if (isNaN(start) || isNaN(end) || start > end || start >= total) {
-        // 416 Range Not Satisfiable
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= total) {
         res.writeHead(416, {
-          'Content-Range': `bytes */${total}`
+          "Content-Range": `bytes */${total}`,
         });
         res.end();
         return;
@@ -169,262 +84,302 @@ function serveStaticFile(req, res) {
 
       const chunkSize = (end - start) + 1;
       res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${total}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunkSize,
-        'Content-Type': mimeType
+        "Content-Range": `bytes ${start}-${end}/${total}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunkSize,
+        "Content-Type": mimeType,
       });
-      const stream = fs.createReadStream(filePath, { start, end });
-      stream.on('error', (streamErr) => {
-        console.error(`[HTTP] Stream error for ${req.url}: ${streamErr.message}`);
-        res.end();
-      });
-      stream.pipe(res);
-    } else {
-      // No range header: send full file with Accept-Ranges advertised
-      if (req.method === 'HEAD') {
-        res.writeHead(200, {
-          'Content-Length': total,
-          'Content-Type': mimeType,
-          'Accept-Ranges': 'bytes'
-        });
-        res.end();
-        return;
-      }
 
-      res.writeHead(200, {
-        'Content-Length': total,
-        'Content-Type': mimeType,
-        'Accept-Ranges': 'bytes'
-      });
-      const stream = fs.createReadStream(filePath);
-      stream.on('error', (streamErr) => {
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.on("error", (streamErr) => {
         console.error(`[HTTP] Stream error for ${req.url}: ${streamErr.message}`);
         res.end();
       });
       stream.pipe(res);
+      return;
     }
+
+    if (req.method === "HEAD") {
+      res.writeHead(200, {
+        "Content-Length": total,
+        "Content-Type": mimeType,
+        "Accept-Ranges": "bytes",
+      });
+      res.end();
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Length": total,
+      "Content-Type": mimeType,
+      "Accept-Ranges": "bytes",
+    });
+
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", (streamErr) => {
+      console.error(`[HTTP] Stream error for ${req.url}: ${streamErr.message}`);
+      res.end();
+    });
+    stream.pipe(res);
   });
 }
 
-const clients = new Map();
+const clientsById = new Map();
+const clientsBySocket = new Map();
 const monitors = new Set();
+
+function makeClientId() {
+  return `client_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function isMonitorConnection(req) {
+  const userAgent = req.headers["user-agent"] || "";
+  const origin = req.headers.origin;
+  const hasOrigin = origin !== undefined;
+
+  const isBrowser = (
+    userAgent.includes("Mozilla") ||
+    userAgent.includes("WebKit") ||
+    userAgent.includes("Gecko") ||
+    userAgent.includes("Trident")
+  ) && !userAgent.includes("node") &&
+    !userAgent.includes("curl") &&
+    !userAgent.includes("wget");
+
+  const isMobile = (
+    userAgent.includes("Mobile") ||
+    userAgent.includes("Android") ||
+    userAgent.includes("iPhone") ||
+    userAgent.includes("iPad") ||
+    userAgent.includes("iPod") ||
+    userAgent.includes("webOS") ||
+    userAgent.includes("BlackBerry")
+  );
+
+  return isBrowser && (isMobile || hasOrigin);
+}
+
+function sendText(ws, message) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(message);
+  }
+}
+
+function broadcastToMonitors(message) {
+  for (const monitor of monitors) {
+    sendText(monitor, message);
+  }
+}
+
+function removeClient(client, reason = "disconnect") {
+  if (!client || !clientsById.has(client.id)) {
+    return;
+  }
+
+  clientsById.delete(client.id);
+  clientsBySocket.delete(client.ws);
+  broadcastToMonitors(`[DISCONNECT] ${client.id}-${client.ip}`);
+  console.log(`[client ${reason}] ${client.id}`);
+}
+
+function handleUploadCommand(monitorWs, targetClientId) {
+  const client = clientsById.get(targetClientId);
+
+  if (!client) {
+    sendText(monitorWs, `[COMMAND_RESULT] UPLOAD_VIDEO_FAILED ${targetClientId} CLIENT_NOT_FOUND`);
+    return;
+  }
+
+  try {
+    fs.rmSync(VIDEO_FILE_PATH, { force: true });
+  } catch (error) {
+    console.error(`[upload] Failed to delete old video: ${error.message}`);
+  }
+
+  client.upload.commandTime = Date.now();
+  client.upload.fileBuffer = [];
+  client.upload.isReceivingFile = false;
+  client.upload.fileStartTime = null;
+  client.upload.rttMs = null;
+  client.upload.totalBytes = 0;
+
+  sendText(client.ws, "/upload_video");
+  broadcastToMonitors(`[COMMAND_RESULT] UPLOAD_VIDEO_REQUESTED ${targetClientId}`);
+  console.log(`[command] Sent /upload_video to ${targetClientId}`);
+}
+
+function finalizeUpload(client) {
+  const fileBuffer = Buffer.concat(client.upload.fileBuffer);
+  const fileEndTime = Date.now();
+  const transferDurationMs = client.upload.fileStartTime === null
+    ? 0
+    : fileEndTime - client.upload.fileStartTime;
+  const transferDurationSec = transferDurationMs > 0 ? transferDurationMs / 1000 : 0;
+
+  fs.writeFileSync(VIDEO_FILE_PATH, fileBuffer);
+
+  const hash = crypto.createHash("sha256");
+  hash.update(fileBuffer);
+  const sha256 = hash.digest("hex");
+  const fileSizeMB = fileBuffer.length / (1024 * 1024);
+  const bandwidthMBps = transferDurationSec > 0 ? fileSizeMB / transferDurationSec : 0;
+  const bandwidthMbps = bandwidthMBps * 8;
+  const rttMs = client.upload.rttMs ?? 0;
+
+  console.log(`[upload] ${client.id} file transfer complete. Total size: ${fileBuffer.length} bytes (${transferDurationMs}ms, ${transferDurationSec.toFixed(3)}s)`);
+  console.log(`[upload] ${client.id} file SHA256: ${sha256}`);
+  console.log(`[upload] ${client.id} RTT: ${rttMs}ms | Bandwidth: ${bandwidthMBps.toFixed(2)} MB/s (${bandwidthMbps.toFixed(2)} Mbps)`);
+  console.log(`[upload] ${client.id} file saved to: ${VIDEO_FILE_PATH}`);
+
+  sendText(client.ws, "/file_received");
+  broadcastToMonitors(`[MESSAGE] ${client.id}-${client.ip}: /file_end`);
+  broadcastToMonitors(`[COMMAND_RESULT] UPLOAD_VIDEO_SAVED ${client.id} ${fileBuffer.length} ${fileSizeMB.toFixed(2)} ${sha256} ${rttMs} ${bandwidthMBps.toFixed(2)} ${bandwidthMbps.toFixed(2)}`);
+
+  client.upload.fileBuffer = [];
+  client.upload.isReceivingFile = false;
+  client.upload.totalBytes = 0;
+}
+
+function handleClientMessage(client, data, isBinary) {
+  if (isBinary) {
+    if (client.upload.isReceivingFile) {
+      const chunkBuffer = Buffer.from(data);
+      client.upload.fileBuffer.push(chunkBuffer);
+      client.upload.totalBytes += chunkBuffer.length;
+      const totalBytes = client.upload.totalBytes;
+      const totalMB = totalBytes / (1024 * 1024);
+      console.log(`[upload] ${client.id} received chunk: ${chunkBuffer.length} bytes | total: ${totalBytes} bytes (${totalMB.toFixed(2)} MB)`);
+      broadcastToMonitors(`[COMMAND_RESULT] UPLOAD_VIDEO_PROGRESS ${client.id} ${totalBytes} ${totalMB.toFixed(2)}`);
+    }
+    return;
+  }
+
+  const message = data.toString();
+  console.log(`[message] ${client.id} ${message}`);
+
+  if (message === "/file_start") {
+    client.upload.isReceivingFile = true;
+    client.upload.fileBuffer = [];
+    client.upload.fileStartTime = Date.now();
+    if (client.upload.commandTime !== null) {
+      client.upload.rttMs = client.upload.fileStartTime - client.upload.commandTime;
+    }
+    broadcastToMonitors(`[MESSAGE] ${client.id}-${client.ip}: ${message}`);
+    return;
+  }
+
+  if (message === "/file_end") {
+    finalizeUpload(client);
+    return;
+  }
+
+  broadcastToMonitors(`[MESSAGE] ${client.id}-${client.ip}: ${message}`);
+}
+
+function handleMonitorMessage(ws, rawMessage) {
+  const message = rawMessage.toString();
+  console.log(`[monitor message] ${message}`);
+
+  if (message === "[COMMAND] CLOSE_ALL_CLIENTS") {
+    let closedCount = 0;
+
+    for (const client of clientsById.values()) {
+      try {
+        client.ws.close();
+        closedCount += 1;
+      } catch (error) {
+        console.error(`[error] Failed to close client ${client.id}: ${error.message}`);
+      }
+    }
+
+    sendText(ws, `[COMMAND_RESULT] CLOSE_ALL_CLIENTS ${closedCount}`);
+    console.log(`[command] Closed ${closedCount} client(s)`);
+    return;
+  }
+
+  if (message.startsWith("[COMMAND] UPLOAD_VIDEO ")) {
+    const targetClientId = message.replace("[COMMAND] UPLOAD_VIDEO ", "").trim();
+    handleUploadCommand(ws, targetClientId);
+  }
+}
 
 const server = http.createServer((req, res) => {
   serveStaticFile(req, res);
 });
 
-server.on("upgrade", (req, socket) => {
-  const websocketKey = req.headers["sec-websocket-key"];
-  const upgradeHeader = req.headers.upgrade;
+const wss = new WebSocket.Server({ noServer: true });
 
-  console.log(`[WebSocket upgrade] Attempt from ${req.socket.remoteAddress}:${req.socket.remotePort}`);
+wss.on("connection", (ws, req) => {
+  const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
+  const monitorConnection = isMonitorConnection(req);
 
-  if (!websocketKey || upgradeHeader?.toLowerCase() !== "websocket") {
-    console.log(`[WebSocket upgrade] Rejected - Invalid headers (key: ${!!websocketKey}, upgrade: ${upgradeHeader})`);
-    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-    socket.destroy();
+  console.log(`[WebSocket] Connection from ${clientAddress} (${monitorConnection ? "monitor" : "client"})`);
+
+  if (monitorConnection) {
+    monitors.add(ws);
+
+    for (const client of clientsById.values()) {
+      sendText(ws, `[CONNECT] ${client.id}-${client.ip}`);
+    }
+
+    ws.on("message", (data, isBinary) => {
+      if (!isBinary) {
+        handleMonitorMessage(ws, data);
+      }
+    });
+
+    ws.on("close", () => {
+      monitors.delete(ws);
+      console.log(`[monitor disconnected] ${clientAddress}`);
+    });
+
+    ws.on("error", (error) => {
+      monitors.delete(ws);
+      console.error(`[monitor error] ${clientAddress} ${error.message}`);
+    });
+
     return;
   }
 
-  const acceptValue = createAcceptValue(websocketKey);
-  const responseHeaders = [
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    `Sec-WebSocket-Accept: ${acceptValue}`
-  ];
+  const client = {
+    id: makeClientId(),
+    ip: req.socket.remoteAddress || "unknown",
+    ws,
+    connectedAt: new Date().toISOString(),
+    upload: {
+      commandTime: null,
+      fileBuffer: [],
+      isReceivingFile: false,
+      fileStartTime: null,
+      rttMs: null,
+      totalBytes: 0,
+    },
+  };
 
-  socket.write(`${responseHeaders.join("\r\n")}\r\n\r\n`);
+  clientsById.set(client.id, client);
+  clientsBySocket.set(ws, client);
+  broadcastToMonitors(`[CONNECT] ${client.id}-${client.ip}`);
+  console.log(`[connected] ${clientAddress} (id: ${client.id})`);
 
-  const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
-  const userAgent = req.headers['user-agent'] || '';
-  const origin = req.headers['origin'];
-  const hasOrigin = origin !== undefined;
-
-  console.log(`[DEBUG] Connection from ${clientAddress}`);
-  console.log(`[DEBUG] User-Agent: ${userAgent}`);
-  console.log(`[DEBUG] Origin: ${origin}`);
-  console.log(`[DEBUG] All headers:`, Object.keys(req.headers));
-
-  // Improved browser detection for mobile devices
-  const isBrowser = (
-    userAgent.includes('Mozilla') ||
-    userAgent.includes('WebKit') ||
-    userAgent.includes('Gecko') ||
-    userAgent.includes('Trident')
-  ) && !userAgent.includes('node') &&
-    !userAgent.includes('curl') &&
-    !userAgent.includes('wget');
-
-  // Origin check is optional for mobile browsers (some don't send it)
-  // Only require Origin for desktop browsers
-  const isMobile = (
-    userAgent.includes('Mobile') ||
-    userAgent.includes('Android') ||
-    userAgent.includes('iPhone') ||
-    userAgent.includes('iPad') ||
-    userAgent.includes('iPod') ||
-    userAgent.includes('webOS') ||
-    userAgent.includes('BlackBerry')
-  );
-
-  const finalIsBrowser = isBrowser && (isMobile || hasOrigin);
-
-  console.log(`[DEBUG] isBrowser: ${isBrowser}, isMobile: ${isMobile}, hasOrigin: ${hasOrigin}, finalIsBrowser: ${finalIsBrowser}`);
-
-  let clientId = null;
-
-  if (finalIsBrowser) {
-    console.log(`[monitor connected] ${clientAddress}`);
-    monitors.add(socket);
-
-    clients.forEach((client) => {
-      const connectMsg = `[CONNECT] ${client.id}-${client.ip}`;
-      socket.write(encodeFrame(connectMsg));
-    });
-  } else {
-    clientId = `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const ip = req.socket.remoteAddress || 'unknown';
-    const connectedAt = new Date().toISOString();
-
-    clients.set(socket, {
-      id: clientId,
-      ip: ip,
-      socket: socket,
-      connectedAt: connectedAt
-    });
-
-    console.log(`[connected] ${clientAddress} (id: ${clientId})`);
-
-    const connectMsg = `[CONNECT] ${clientId}-${ip}`;
-    monitors.forEach(monitor => {
-      try {
-        monitor.write(encodeFrame(connectMsg));
-      } catch (e) {
-        console.error(`[error] Failed to send CONNECT to monitor: ${e.message}`);
-      }
-    });
-  }
-
-  let buffered = Buffer.alloc(0);
-
-  socket.on("data", (chunk) => {
-    buffered = Buffer.concat([buffered, chunk]);
-
-    while (buffered.length > 0) {
-      let frame;
-
-      try {
-        frame = decodeFrame(buffered);
-      } catch (error) {
-        console.error(`[error] ${clientAddress} ${error.message}`);
-        socket.destroy();
-        return;
-      }
-
-      if (!frame) {
-        return;
-      }
-
-      buffered = buffered.subarray(frame.frameLength);
-
-      if (frame.opcode === 0x8) {
-        socket.end(Buffer.from([0x88, 0x00]));
-        return;
-      }
-
-      if (frame.opcode === 0x9) {
-        socket.write(Buffer.concat([Buffer.from([0x8a, frame.payload.length]), frame.payload]));
-        continue;
-      }
-
-      if (frame.opcode !== 0x1) {
-        continue;
-      }
-
-      const message = frame.payload.toString("utf8");
-      console.log(`[message] ${clientAddress} ${message}`);
-
-      if (finalIsBrowser && message === '[COMMAND] CLOSE_ALL_CLIENTS') {
-        let closedCount = 0;
-        clients.forEach((client, clientSocket) => {
-          try {
-            clientSocket.write(Buffer.from([0x88, 0x00]));
-            closedCount++;
-          } catch (e) {
-            console.error(`[error] Failed to close client ${client.id}: ${e.message}`);
-          }
-        });
-        const reply = `[COMMAND_RESULT] CLOSE_ALL_CLIENTS ${closedCount}`;
-        socket.write(encodeFrame(reply));
-        console.log(`[command] Closed ${closedCount} client(s)`);
-        continue;
-      }
-
-      const reply = `Server received: ${message}`;
-      socket.write(encodeFrame(reply));
-
-      if (!finalIsBrowser && clientId) {
-        const client = clients.get(socket);
-        if (client) {
-          const messageMsg = `[MESSAGE] ${client.id}-${client.ip}: ${message}`;
-          monitors.forEach(monitor => {
-            try {
-              monitor.write(encodeFrame(messageMsg));
-            } catch (e) {
-              console.error(`[error] Failed to send MESSAGE to monitor: ${e.message}`);
-            }
-          });
-        }
-      }
-    }
+  ws.on("message", (data, isBinary) => {
+    handleClientMessage(client, data, isBinary);
   });
 
-  socket.on("close", () => {
-    console.log(`[disconnected] ${clientAddress}`);
-
-    if (finalIsBrowser) {
-      monitors.delete(socket);
-      console.log(`[monitor disconnected] ${clientAddress}`);
-    } else if (clientId) {
-      const client = clients.get(socket);
-      if (client) {
-        const disconnectMsg = `[DISCONNECT] ${client.id}-${client.ip}`;
-        monitors.forEach(monitor => {
-          try {
-            monitor.write(encodeFrame(disconnectMsg));
-          } catch (e) {
-            console.error(`[error] Failed to send DISCONNECT to monitor: ${e.message}`);
-          }
-        });
-
-        clients.delete(socket);
-        console.log(`[client disconnected] ${clientId}`);
-      }
-    }
+  ws.on("close", () => {
+    removeClient(client);
   });
 
-  socket.on("error", (error) => {
-    console.error(`[socket error] ${clientAddress} ${error.message}`);
+  ws.on("error", (error) => {
+    console.error(`[client error] ${client.id} ${error.message}`);
+    removeClient(client, "error");
+  });
+});
 
-    if (finalIsBrowser) {
-      monitors.delete(socket);
-    } else if (clientId) {
-      const client = clients.get(socket);
-      if (client) {
-        const disconnectMsg = `[DISCONNECT] ${client.id}-${client.ip}`;
-        monitors.forEach(monitor => {
-          try {
-            monitor.write(encodeFrame(disconnectMsg));
-          } catch (e) {
-            console.error(`[error] Failed to send DISCONNECT to monitor: ${e.message}`);
-          }
-        });
+server.on("upgrade", (req, socket, head) => {
+  console.log(`[WebSocket upgrade] Attempt from ${req.socket.remoteAddress}:${req.socket.remotePort}`);
 
-        clients.delete(socket);
-      }
-    }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit("connection", ws, req);
   });
 });
 
