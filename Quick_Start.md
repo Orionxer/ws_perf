@@ -8,6 +8,14 @@ npm install
 npm start
 ```
 
+如果需要后台启动服务，不在前台显示日志、也不保存日志，可使用：
+
+```bash
+nohup node server.js >/dev/null 2>&1 &
+ps -ef | grep 'node server.js' | grep -v grep
+pkill -f 'node server.js'
+```
+
 服务启动后访问：
 
 ```text
