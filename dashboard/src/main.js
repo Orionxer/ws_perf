@@ -23,6 +23,11 @@ const state = {
   },
 };
 
+const uiState = {
+  renderedRoute: null,
+  renderedClientId: null,
+};
+
 function setUploadStatus(clientId, tone, text, busy = false, html = '') {
   state.uploadStatus = {
     clientId,
@@ -126,7 +131,13 @@ ws.onmessage = (event) => {
         connectedAt: new Date().toISOString(),
         messages: [],
       });
-      render();
+
+      if (state.currentRoute === 'list') {
+        refreshClientListUI();
+      } else {
+        refreshHeaderUI();
+      }
+
       highlightNewClient(id);
     }
   } else if (message.startsWith('[DISCONNECT]')) {
@@ -139,9 +150,15 @@ ws.onmessage = (event) => {
       if (state.currentClientId === id) {
         state.currentClientId = null;
         state.currentRoute = 'list';
+        render();
+        return;
       }
 
-      render();
+      if (state.currentRoute === 'list') {
+        refreshClientListUI();
+      } else {
+        refreshHeaderUI();
+      }
     }
   } else if (message.startsWith('[MESSAGE]')) {
     const payload = message.replace('[MESSAGE] ', '');
@@ -164,8 +181,6 @@ ws.onmessage = (event) => {
 
       if (state.currentRoute === 'detail' && state.currentClientId === id) {
         addNewMessageWithAnimation(msgContent);
-      } else {
-        render();
       }
     }
   } else if (message.startsWith('[COMMAND_RESULT]')) {
@@ -202,7 +217,7 @@ ws.onmessage = (event) => {
       );
 
       if (state.currentRoute === 'detail' && state.currentClientId === clientId) {
-        render();
+        refreshVideoCardUI();
       }
     } else if (message.startsWith('[COMMAND_RESULT] UPLOAD_VIDEO_FAILED')) {
       const payload = message.replace('[COMMAND_RESULT] UPLOAD_VIDEO_FAILED ', '');
@@ -339,6 +354,7 @@ function renderHeader() {
     <header class="header" role="banner">
       <h1>WebSocket 监控面板</h1>
       <button
+        id="closeAllButton"
         class="close-all-button"
         onclick="window.closeAllClients()"
         ${clientCount === 0 ? 'disabled' : ''}
@@ -351,11 +367,12 @@ function renderHeader() {
   `;
 }
 
-function renderClientList() {
-  const cards = Array.from(state.clients.values())
+function getClientCardsMarkup() {
+  return Array.from(state.clients.values())
     .map((client, index) => `
       <button
         class="client-card"
+        data-client-id="${client.id}"
         onclick="window.navigate('${client.id}')"
         aria-label="查看客户端 ${client.id} 的详细信息"
         style="animation-delay: ${index * 0.05}s"
@@ -368,10 +385,14 @@ function renderClientList() {
       </button>
     `)
     .join('');
+}
+
+function renderClientList() {
+  const cards = getClientCardsMarkup();
 
   return `
     ${renderHeader()}
-    <main class="client-list" role="main" aria-label="客户端列表">
+    <main class="client-list" id="clientList" role="main" aria-label="客户端列表">
       ${cards || '<div class="empty-state" role="status" aria-live="polite">暂无连接的客户端</div>'}
     </main>
   `;
@@ -397,7 +418,7 @@ function renderClientDetail() {
 
   return `
     ${renderHeader()}
-    <section class="client-detail" aria-label="客户端详情">
+    <section class="client-detail" id="clientDetail" aria-label="客户端详情">
       <div class="client-detail-header">
         <div class="header-actions">
           <button class="back-button" onclick="window.navigateBack()" aria-label="返回客户端列表">返回列表</button>
@@ -410,7 +431,7 @@ function renderClientDetail() {
         </div>
         ${uploadStatusMarkup}
       </div>
-      ${renderVideoCard()}
+      <div id="videoCardContainer">${renderVideoCard()}</div>
       <div class="message-list" id="messageList" role="log" aria-live="polite" aria-label="消息列表">
         ${messageItems || '<div class="empty-state" role="status">暂无消息</div>'}
       </div>
@@ -418,26 +439,68 @@ function renderClientDetail() {
   `;
 }
 
+function refreshHeaderUI() {
+  const button = document.getElementById('closeAllButton');
+  if (!button) {
+    return false;
+  }
+
+  const clientCount = state.clients.size;
+  button.textContent = `关闭所有客户端 (${clientCount})`;
+  button.disabled = clientCount === 0;
+  button.setAttribute('aria-label', `关闭所有连接的客户端 (${clientCount})`);
+  button.setAttribute('aria-disabled', clientCount === 0 ? 'true' : 'false');
+  return true;
+}
+
+function refreshClientListUI() {
+  const clientList = document.getElementById('clientList');
+  if (!clientList || state.currentRoute !== 'list') {
+    return false;
+  }
+
+  const cards = getClientCardsMarkup();
+  clientList.innerHTML = cards || '<div class="empty-state" role="status" aria-live="polite">暂无连接的客户端</div>';
+  refreshHeaderUI();
+  return true;
+}
+
+function refreshVideoCardUI() {
+  const container = document.getElementById('videoCardContainer');
+  if (!container || state.currentRoute !== 'detail' || !state.currentClientId) {
+    return false;
+  }
+
+  container.innerHTML = renderVideoCard();
+  initVideoPlayer();
+  return true;
+}
+
 function render() {
   const app = document.getElementById('app');
 
   if (state.currentRoute === 'list') {
     app.innerHTML = renderClientList();
+    uiState.renderedRoute = 'list';
+    uiState.renderedClientId = null;
   } else if (state.currentRoute === 'detail' && state.currentClientId) {
     app.innerHTML = renderClientDetail();
+    uiState.renderedRoute = 'detail';
+    uiState.renderedClientId = state.currentClientId;
     initVideoPlayer();
 
-    // Check video availability on first load, then re-render if state changed
+    // Check video availability on first load, then refresh only the video area.
     if (state.videoAvailable === null) {
       checkVideoAvailability().then(() => {
-        if (state.currentRoute === 'detail') {
-          app.innerHTML = renderClientDetail();
-          initVideoPlayer();
+        if (state.currentRoute === 'detail' && state.currentClientId === uiState.renderedClientId) {
+          refreshVideoCardUI();
         }
       });
     }
   } else {
     app.innerHTML = renderClientList();
+    uiState.renderedRoute = 'list';
+    uiState.renderedClientId = null;
   }
 }
 
@@ -469,7 +532,7 @@ window.uploadVideo = () => {
   state.videoAvailable = false;
   state.videoVersion = Date.now();
   setUploadStatus(currentClientId, 'progress', '正在向客户端发送上传指令...', true);
-  render();
+  refreshVideoCardUI();
 
   ws.send(`[COMMAND] UPLOAD_VIDEO ${currentClientId}`);
 };
@@ -497,14 +560,14 @@ window.onpopstate = () => {
 // Animation helper functions
 function highlightNewClient(clientId) {
   setTimeout(() => {
-    const cards = document.querySelectorAll('.client-card');
-    cards.forEach(card => {
-      if (card.textContent.includes(clientId)) {
-        card.style.animation = 'none';
-        card.offsetHeight;
-        card.style.animation = 'newClientHighlight 0.8s ease';
-      }
-    });
+    const card = document.querySelector(`.client-card[data-client-id="${clientId}"]`);
+    if (!card) {
+      return;
+    }
+
+    card.style.animation = 'none';
+    card.offsetHeight;
+    card.style.animation = 'newClientHighlight 0.8s ease';
   }, 100);
 }
 
