@@ -35,7 +35,6 @@ ws.on('message', (data, isBinary) => {
     console.log(`File transfer complete (${transferDurationMs}ms, ${transferDurationSec.toFixed(3)}s)`);
     console.log('Server confirmed file received successfully');
     printTransferStats();
-    ws.close();
   }
 });
 
