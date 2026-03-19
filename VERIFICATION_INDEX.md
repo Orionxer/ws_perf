@@ -79,7 +79,7 @@
 - [x] Video card visible on detail page
 - [x] Video element loads
 - [x] Video metadata accessible
-- [x] Video source correct (/resource/starship_11mb.mp4)
+- [x] Video source correct (/resource/starship.mp4)
 
 ### Video Playback
 - [x] Play button functional
@@ -141,7 +141,7 @@
 ## 🎯 Test Scenarios Verified
 
 ### Scenario 1: Video Available
-- ✅ Video file present: `/resource/starship_11mb.mp4`
+- ✅ Video file present: `/resource/starship.mp4`
 - ✅ Video loads successfully
 - ✅ All controls functional
 - ✅ Playback smooth

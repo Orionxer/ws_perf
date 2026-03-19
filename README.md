@@ -33,6 +33,24 @@
 ./test-integrated.sh
 ```
 
+## 前端构建说明
+
+`server.js` 直接托管的是 `dashboard/dist` 下的静态文件，不会实时读取 `dashboard/src`。
+
+如果修改了以下前端源码：
+
+- `dashboard/src/main.js`
+- `dashboard/src/style.css`
+
+需要重新构建后，浏览器访问到的页面才会更新：
+
+```bash
+cd /home/orionxer/ai/ws_perf/dashboard
+npm run build
+```
+
+如果页面表现和 `dashboard/src` 里的代码不一致，优先确认是否已经完成这一步。
+
 ## 项目结构
 
 ```

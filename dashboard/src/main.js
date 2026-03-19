@@ -149,7 +149,7 @@ function formatDateTime(isoString) {
 async function checkVideoAvailability() {
   if (state.videoAvailable !== null) return state.videoAvailable;
   try {
-    const response = await fetch('/resource/starship_11mb.mp4', { method: 'HEAD' });
+    const response = await fetch('/resource/starship.mp4', { method: 'HEAD' });
     state.videoAvailable = response.ok;
   } catch {
     state.videoAvailable = false;
@@ -177,7 +177,7 @@ function renderVideoCard() {
       <video class="video-player" id="videoPlayer" preload="metadata"
         playsinline
         webkit-playsinline
-        src="/resource/starship_11mb.mp4">
+        src="/resource/starship.mp4">
       </video>
       <div class="video-controls">
         <button class="video-play-btn" id="videoPlayBtn" aria-label="Play video">${PLAY_ICON}</button>

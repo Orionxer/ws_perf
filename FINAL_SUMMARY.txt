@@ -41,7 +41,7 @@ STEP 4: CLIENT LIST
 STEP 5: VIDEO PLAYER FUNCTIONALITY
   ✅ Video Card: VISIBLE (on detail page)
   ✅ Video Element: LOADED
-  ✅ Video Source: /resource/starship_11mb.mp4
+  ✅ Video Source: /resource/starship.mp4
   ✅ Video Duration: 29.07 seconds
   ✅ Video Format: MP4 (H.264)
 

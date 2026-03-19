@@ -10,8 +10,8 @@ async function runTest() {
     console.log('=== TEST: No video available scenario ===\n');
     
     console.log('STEP 1: Rename video file to simulate unavailable video');
-    const videoPath = '/home/orionxer/ai/ws_perf/resource/starship_11mb.mp4';
-    const backupPath = '/home/orionxer/ai/ws_perf/resource/starship_11mb.mp4.bak';
+    const videoPath = '/home/orionxer/ai/ws_perf/resource/starship.mp4';
+    const backupPath = '/home/orionxer/ai/ws_perf/resource/starship.mp4.bak';
     
     if (fs.existsSync(videoPath)) {
       fs.renameSync(videoPath, backupPath);
@@ -81,8 +81,8 @@ async function runTest() {
   } catch (error) {
     console.error('✗ Test failed:', error.message);
     // Restore video file even if test fails
-    const videoPath = '/home/orionxer/ai/ws_perf/resource/starship_11mb.mp4';
-    const backupPath = '/home/orionxer/ai/ws_perf/resource/starship_11mb.mp4.bak';
+    const videoPath = '/home/orionxer/ai/ws_perf/resource/starship.mp4';
+    const backupPath = '/home/orionxer/ai/ws_perf/resource/starship.mp4.bak';
     if (fs.existsSync(backupPath)) {
       fs.renameSync(backupPath, videoPath);
       console.log('✓ Video file restored after error');

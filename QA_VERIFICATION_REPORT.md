@@ -62,7 +62,7 @@ cd /home/orionxer/ai/ws_perf/dashboard && npm run build
 - **Status:** ✅ **PASS**
 - **Video Card Present:** Yes (1 element found)
 - **Video Element:** Yes (1 video tag found)
-- **Video Source:** `/resource/starship_11mb.mp4`
+- **Video Source:** `/resource/starship.mp4`
 - **Video Metadata:**
   - Duration: 29.07 seconds
   - Format: MP4 (H.264)
@@ -126,7 +126,7 @@ cd /home/orionxer/ai/ws_perf/dashboard && npm run build
 ## 5. "NO VIDEO AVAILABLE" SCENARIO
 
 ### Scenario Setup
-- **Video File Moved:** starship_11mb.mp4 → starship_11mb.mp4.bak
+- **Video File Moved:** starship.mp4 → starship.mp4.bak
 - **Server Still Running:** Yes
 
 ### Result

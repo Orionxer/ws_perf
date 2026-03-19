@@ -1,0 +1,12 @@
+{
+  "name": "websocket-video-server",
+  "version": "1.0.0",
+  "description": "WebSocket server for receiving video files",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

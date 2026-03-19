@@ -24,7 +24,7 @@ const has403Response = serverCode.includes('403') && serverCode.includes('Forbid
 console.log(`✓ 403 Forbidden response: ${has403Response ? "YES" : "NO"}`);
 
 // Verify resource file exists
-const resourceFile = "/home/orionxer/ai/ws_perf/resource/starship_11mb.mp4";
+const resourceFile = "/home/orionxer/ai/ws_perf/resource/starship.mp4";
 const fileExists = fs.existsSync(resourceFile);
 console.log(`\n✓ Resource file exists: ${fileExists ? "YES" : "NO"}`);
 
@@ -38,4 +38,3 @@ console.log("\n=== FUNCTIONALITY TEST ===\n");
 // Load the actual server code and test
 const serverModule = require("./server.js");
 console.log("Server module loaded successfully (syntax OK)");
-
