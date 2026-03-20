@@ -82,6 +82,24 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+function parseConnectPayload(payload) {
+  const parts = payload.trim().split(' ');
+
+  if (parts.length >= 3) {
+    const [id, ip, protocol] = parts;
+    if (id && ip) {
+      return { id, ip, protocol: protocol || 'ws' };
+    }
+  }
+
+  const [id, ip] = payload.split('-');
+  if (id && ip) {
+    return { id, ip, protocol: 'ws' };
+  }
+
+  return null;
+}
+
 function buildUploadSuccessHtml({ bytes, mb, sha256, rttMs, bandwidthMBps, bandwidthMbps, uploadTimeMs }) {
   return `
     <div class="upload-status-title">上传成功</div>
@@ -146,12 +164,13 @@ function handleSocketMessage(event) {
 
   if (message.startsWith('[CONNECT]')) {
     const payload = message.replace('[CONNECT] ', '');
-    const [id, ip] = payload.split('-');
+    const connectInfo = parseConnectPayload(payload);
 
-    if (id && ip) {
-      state.clients.set(id, {
-        id,
-        ip,
+    if (connectInfo) {
+      state.clients.set(connectInfo.id, {
+        id: connectInfo.id,
+        ip: connectInfo.ip,
+        protocol: connectInfo.protocol,
         connectedAt: new Date().toISOString(),
         messages: [],
       });
@@ -162,7 +181,7 @@ function handleSocketMessage(event) {
         refreshHeaderUI();
       }
 
-      highlightNewClient(id);
+      highlightNewClient(connectInfo.id);
     }
   } else if (message.startsWith('[DISCONNECT]')) {
     const payload = message.replace('[DISCONNECT] ', '');
@@ -297,9 +316,9 @@ window.toggleHeartbeat = () => {
 function parseMessage(message) {
   if (message.startsWith('[CONNECT]')) {
     const payload = message.replace('[CONNECT] ', '');
-    const [id, ip] = payload.split('-');
-    if (id && ip) {
-      return { type: 'connect', id, ip };
+    const connectInfo = parseConnectPayload(payload);
+    if (connectInfo) {
+      return { type: 'connect', ...connectInfo };
     }
   } else if (message.startsWith('[DISCONNECT]')) {
     const payload = message.replace('[DISCONNECT] ', '');
@@ -428,10 +447,14 @@ function getClientCardsMarkup() {
         aria-label="查看客户端 ${client.id} 的详细信息"
         style="animation-delay: ${index * 0.05}s"
       >
-        <div class="client-id">${client.id}</div>
+        <div class="client-id-row">
+          <div class="client-id">${client.id}</div>
+          <span class="client-protocol-badge client-protocol-badge--${client.protocol || 'ws'}">${escapeHtml(client.protocol || 'ws')}</span>
+        </div>
         <div class="client-info">
           <div>连接时间: ${formatDateTime(client.connectedAt)}</div>
           <div>IP 地址: ${client.ip}</div>
+          <div>连接协议: ${client.protocol || 'ws'}</div>
         </div>
       </button>
     `)
@@ -479,6 +502,7 @@ function renderClientDetail() {
         <div class="client-info">
           <div>连接时间: ${formatDateTime(client.connectedAt)}</div>
           <div>IP 地址: ${client.ip}</div>
+          <div>连接协议: <span class="client-protocol-badge client-protocol-badge--${client.protocol || 'ws'}">${escapeHtml(client.protocol || 'ws')}</span></div>
         </div>
         ${uploadStatusMarkup}
       </div>

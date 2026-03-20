@@ -208,6 +208,10 @@ function removeClient(client, reason = "disconnect") {
   console.log(`[client ${reason}] ${client.id}`);
 }
 
+function getClientTransportProtocol(req) {
+  return req.socket.encrypted ? "wss" : "ws";
+}
+
 function handleUploadCommand(monitorWs, targetClientId) {
   const client = clientsById.get(targetClientId);
 
@@ -361,7 +365,7 @@ wss.on("connection", (ws, req) => {
     ws.lastActivity = Date.now();
 
     for (const client of clientsById.values()) {
-      sendText(ws, `[CONNECT] ${client.id}-${client.ip}`);
+      sendText(ws, `[CONNECT] ${client.id} ${client.ip} ${client.protocol}`);
     }
     syncHeartbeatStatus(ws);
 
@@ -392,6 +396,7 @@ wss.on("connection", (ws, req) => {
   const client = {
     id: makeClientId(),
     ip: req.socket.remoteAddress || "unknown",
+    protocol: getClientTransportProtocol(req),
     ws,
     connectedAt: new Date().toISOString(),
     upload: {
@@ -407,7 +412,7 @@ wss.on("connection", (ws, req) => {
   clientsById.set(client.id, client);
   clientsBySocket.set(ws, client);
   ws.lastActivity = Date.now();
-  broadcastToMonitors(`[CONNECT] ${client.id}-${client.ip}`);
+  broadcastToMonitors(`[CONNECT] ${client.id} ${client.ip} ${client.protocol}`);
   console.log(`[connected] ${clientAddress} (id: ${client.id})`); 
 
   ws.on("message", (data, isBinary) => {
