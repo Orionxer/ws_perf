@@ -287,6 +287,8 @@ body::after {
 }
 
 .client-card {
+  appearance: none;
+  -webkit-appearance: none;
   background: var(--bg-card);
   backdrop-filter: blur(10px);
   padding: var(--space-lg);
@@ -296,6 +298,8 @@ body::after {
   transition: all var(--transition-base);
   position: relative;
   overflow: hidden;
+  width: 100%;
+  text-align: left;
 }
 
 .client-card::before {
