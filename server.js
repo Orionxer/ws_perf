@@ -1,4 +1,5 @@
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -6,11 +7,14 @@ const WebSocket = require("ws");
 
 const HOST = "0.0.0.0";
 const PORT = 1885;
+const TLS_PORT = 1886;
 const HEARTBEAT_INTERVAL_MS = 10000;
 const STATIC_DIR = path.join(__dirname, "dashboard", "dist");
 const RESOURCE_DIR = path.join(__dirname, "resource");
 const VIDEO_FILE_NAME = "starship.mp4";
 const VIDEO_FILE_PATH = path.join(RESOURCE_DIR, VIDEO_FILE_NAME);
+const SSL_KEY_PATH = "/etc/nginx/certs/gogo.uno/gogo.uno.key";
+const SSL_CERT_PATH = "/etc/nginx/certs/gogo.uno/fullchain.cer";
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -31,7 +35,8 @@ if (!fs.existsSync(RESOURCE_DIR)) {
 function serveStaticFile(req, res) {
   const clientAddress = `${req.socket.remoteAddress}:${req.socket.remotePort}`;
   console.log(`[HTTP] ${req.method} ${req.url} from ${clientAddress}`);
-  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const protocol = req.socket.encrypted ? "https" : "http";
+  const requestUrl = new URL(req.url, `${protocol}://${req.headers.host || "localhost"}`);
   const pathname = requestUrl.pathname;
 
   let filePath;
@@ -334,9 +339,13 @@ function handleMonitorMessage(ws, rawMessage) {
   }
 }
 
-const server = http.createServer((req, res) => {
+const requestHandler = (req, res) => {
   serveStaticFile(req, res);
-});
+};
+
+const server = http.createServer(requestHandler);
+
+let secureServer = null;
 
 const wss = new WebSocket.Server({ noServer: true });
 
@@ -465,18 +474,35 @@ const heartbeatTimer = setInterval(() => {
   }
 }, HEARTBEAT_INTERVAL_MS);
 
-wss.on("close", () => {
-  clearInterval(heartbeatTimer);
-});
-
-server.on("upgrade", (req, socket, head) => {
+function handleUpgrade(req, socket, head) {
   console.log(`[WebSocket upgrade] Attempt from ${req.socket.remoteAddress}:${req.socket.remotePort}`);
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
+}
+
+wss.on("close", () => {
+  clearInterval(heartbeatTimer);
 });
+
+server.on("upgrade", handleUpgrade);
 
 server.listen(PORT, HOST, () => {
   console.log(`WebSocket server listening on ws://${HOST}:${PORT}`);
 });
+
+try {
+  const tlsOptions = {
+    key: fs.readFileSync(SSL_KEY_PATH),
+    cert: fs.readFileSync(SSL_CERT_PATH),
+  };
+
+  secureServer = https.createServer(tlsOptions, requestHandler);
+  secureServer.on("upgrade", handleUpgrade);
+  secureServer.listen(TLS_PORT, HOST, () => {
+    console.log(`Secure WebSocket server listening on wss://${HOST}:${TLS_PORT}`);
+  });
+} catch (error) {
+  console.error(`[HTTPS] Failed to start secure server on port ${TLS_PORT}: ${error.message}`);
+}
