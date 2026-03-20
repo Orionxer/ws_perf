@@ -6,7 +6,7 @@ const PAUSE_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="curren
 
 // Dynamically determine WebSocket URL based on current page host
 // This works for both localhost (development) and remote access (mobile)
-const WS_URL = `ws://${window.location.host}`;
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 
 const state = {
   clients: new Map(),

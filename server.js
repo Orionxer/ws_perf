@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const WebSocket = require("ws");
 
 const HOST = "0.0.0.0";
-const PORT = 8080;
+const PORT = 1885;
 const HEARTBEAT_INTERVAL_MS = 10000;
 const STATIC_DIR = path.join(__dirname, "dashboard", "dist");
 const RESOURCE_DIR = path.join(__dirname, "resource");
