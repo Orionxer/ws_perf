@@ -13,7 +13,7 @@ const state = {
   currentRoute: 'list',
   currentClientId: null,
   heartbeatEnabled: true,
-  videoAvailable: null,  // null = unchecked, true/false after HEAD check
+  videoAvailable: null,
   videoVersion: Date.now(),
   uploadStatus: {
     clientId: null,
@@ -22,6 +22,7 @@ const state = {
     html: '',
     busy: false,
   },
+  messageInput: '',
 };
 
 const uiState = {
@@ -172,7 +173,7 @@ function handleSocketMessage(event) {
         ip: connectInfo.ip,
         protocol: connectInfo.protocol,
         connectedAt: new Date().toISOString(),
-        messages: [],
+        messages: [],  // Array of { content: string, sender: 'client' | 'server' }
       });
 
       if (state.currentRoute === 'list') {
@@ -214,7 +215,7 @@ function handleSocketMessage(event) {
 
     if (id && state.clients.has(id)) {
       const client = state.clients.get(id);
-      client.messages.push(msgContent);
+      client.messages.push({ content: msgContent, sender: 'client' });
 
       if (msgContent === '/file_start') {
         setUploadStatus(id, 'progress', `上传中：已接收 0 字节，${formatMegabytes(0)} MB`, true);
@@ -223,7 +224,7 @@ function handleSocketMessage(event) {
       }
 
       if (state.currentRoute === 'detail' && state.currentClientId === id) {
-        addNewMessageWithAnimation(msgContent);
+        addNewMessageWithAnimation({ content: msgContent, sender: 'client' });
       }
     }
   } else if (message.startsWith('[COMMAND_RESULT]')) {
@@ -274,6 +275,22 @@ function handleSocketMessage(event) {
   } else if (message.startsWith('[SYSTEM] HEARTBEAT ')) {
     state.heartbeatEnabled = message.endsWith('ON');
     refreshHeaderUI();
+  } else if (message.startsWith('[SERVER_MESSAGE]')) {
+    const payload = message.replace('[SERVER_MESSAGE] ', '');
+    const separatorIndex = payload.indexOf(': ');
+    if (separatorIndex === -1) return;
+
+    const clientId = payload.substring(0, separatorIndex);
+    const msgContent = payload.substring(separatorIndex + 2);
+
+    if (state.clients.has(clientId)) {
+      const client = state.clients.get(clientId);
+      client.messages.push({ content: msgContent, sender: 'server' });
+
+      if (state.currentRoute === 'detail' && state.currentClientId === clientId) {
+        addNewMessageWithAnimation({ content: msgContent, sender: 'server' });
+      }
+    }
   }
 }
 
@@ -482,7 +499,10 @@ function renderClientDetail() {
   }
 
   const messageItems = client.messages
-    .map((msg, index) => `<div class="message-item" style="animation-delay: ${index * 0.03}s">${msg}</div>`)
+    .map((msg, index) => {
+      const senderClass = msg.sender === 'server' ? 'message-bubble--server' : 'message-bubble--client';
+      return `<div class="message-bubble ${senderClass}" style="animation-delay: ${index * 0.03}s">${escapeHtml(msg.content)}</div>`;
+    })
     .join('');
   const uploadStatus = state.uploadStatus.clientId === client.id ? state.uploadStatus : null;
   const uploadButtonLabel = uploadStatus?.busy ? '上传中...' : '上传视频';
@@ -509,6 +529,21 @@ function renderClientDetail() {
       <div id="videoCardContainer">${renderVideoCard()}</div>
       <div class="message-list" id="messageList" role="log" aria-live="polite" aria-label="消息列表">
         ${messageItems || '<div class="empty-state" role="status">暂无消息</div>'}
+      </div>
+      <div class="message-input-container">
+        <textarea
+          id="messageInput"
+          class="message-input"
+          placeholder="输入消息..."
+          rows="1"
+          aria-label="消息输入框"
+        ></textarea>
+        <button
+          id="sendMessageBtn"
+          class="send-message-btn"
+          onclick="window.sendMessage()"
+          aria-label="发送消息"
+        >发送</button>
       </div>
     </section>
   `;
@@ -574,8 +609,8 @@ function render() {
     uiState.renderedRoute = 'detail';
     uiState.renderedClientId = state.currentClientId;
     initVideoPlayer();
+    initMessageInput();
 
-    // Check video availability on first load, then refresh only the video area.
     if (state.videoAvailable === null) {
       checkVideoAvailability().then(() => {
         if (state.currentRoute === 'detail' && state.currentClientId === uiState.renderedClientId) {
@@ -624,6 +659,31 @@ window.uploadVideo = () => {
   socket.send(`[COMMAND] UPLOAD_VIDEO ${currentClientId}`);
 };
 
+window.sendMessage = () => {
+  const currentClientId = state.currentClientId;
+  const socket = getActiveSocket();
+  const input = document.getElementById('messageInput');
+
+  if (!input) return;
+
+  const message = input.value.trim();
+  if (!message) return;
+
+  if (!currentClientId) {
+    console.error('No client selected');
+    return;
+  }
+
+  if (socket.readyState !== WebSocket.OPEN) {
+    console.error('WebSocket not connected');
+    return;
+  }
+
+  socket.send(`[COMMAND] SEND_MESSAGE ${currentClientId} ${message}`);
+  input.value = '';
+  input.focus();
+};
+
 window.onpopstate = () => {
   const hash = window.location.hash;
 
@@ -658,7 +718,7 @@ function highlightNewClient(clientId) {
   }, 100);
 }
 
-function addNewMessageWithAnimation(content) {
+function addNewMessageWithAnimation(msg) {
   const messageList = document.getElementById('messageList');
   if (!messageList) return;
 
@@ -668,8 +728,9 @@ function addNewMessageWithAnimation(content) {
   }
 
   const messageItem = document.createElement('div');
-  messageItem.className = 'message-item';
-  messageItem.textContent = content;
+  const senderClass = msg.sender === 'server' ? 'message-bubble--server' : 'message-bubble--client';
+  messageItem.className = `message-bubble ${senderClass}`;
+  messageItem.textContent = msg.content;
   messageItem.style.animation = 'messageSlideIn 0.3s ease';
 
   messageList.appendChild(messageItem);
@@ -714,6 +775,23 @@ function initVideoPlayer() {
     playBtn.innerHTML = PLAY_ICON;
     playBtn.setAttribute('aria-label', 'Play video');
     progressBar.style.width = '0%';
+  });
+}
+
+function initMessageInput() {
+  const input = document.getElementById('messageInput');
+  if (!input) return;
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      window.sendMessage();
+    }
+  });
+
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   });
 }
 

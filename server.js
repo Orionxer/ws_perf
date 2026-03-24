@@ -340,6 +340,29 @@ function handleMonitorMessage(ws, rawMessage) {
   if (message.startsWith("[COMMAND] UPLOAD_VIDEO ")) {
     const targetClientId = message.replace("[COMMAND] UPLOAD_VIDEO ", "").trim();
     handleUploadCommand(ws, targetClientId);
+    return;
+  }
+
+  if (message.startsWith("[COMMAND] SEND_MESSAGE ")) {
+    const payload = message.replace("[COMMAND] SEND_MESSAGE ", "");
+    const spaceIndex = payload.indexOf(" ");
+    if (spaceIndex === -1) {
+      sendText(ws, "[COMMAND_RESULT] SEND_MESSAGE_FAILED INVALID_FORMAT");
+      return;
+    }
+
+    const targetClientId = payload.substring(0, spaceIndex);
+    const msgContent = payload.substring(spaceIndex + 1);
+    const client = clientsById.get(targetClientId);
+
+    if (!client) {
+      sendText(ws, `[COMMAND_RESULT] SEND_MESSAGE_FAILED ${targetClientId} CLIENT_NOT_FOUND`);
+      return;
+    }
+
+    sendText(client.ws, msgContent);
+    broadcastToMonitors(`[SERVER_MESSAGE] ${targetClientId}: ${msgContent}`);
+    console.log(`[server message] Sent to ${targetClientId}: ${msgContent}`);
   }
 }
 
