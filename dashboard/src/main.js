@@ -215,7 +215,8 @@ function handleSocketMessage(event) {
 
     if (id && state.clients.has(id)) {
       const client = state.clients.get(id);
-      client.messages.push({ content: msgContent, sender: 'client' });
+      const timestamp = new Date().toISOString();
+      client.messages.push({ content: msgContent, sender: 'client', timestamp });
 
       if (msgContent === '/file_start') {
         setUploadStatus(id, 'progress', `上传中：已接收 0 字节，${formatMegabytes(0)} MB`, true);
@@ -224,7 +225,7 @@ function handleSocketMessage(event) {
       }
 
       if (state.currentRoute === 'detail' && state.currentClientId === id) {
-        addNewMessageWithAnimation({ content: msgContent, sender: 'client' });
+        addNewMessageWithAnimation({ content: msgContent, sender: 'client', timestamp });
       }
     }
   } else if (message.startsWith('[COMMAND_RESULT]')) {
@@ -285,10 +286,11 @@ function handleSocketMessage(event) {
 
     if (state.clients.has(clientId)) {
       const client = state.clients.get(clientId);
-      client.messages.push({ content: msgContent, sender: 'server' });
+      const timestamp = new Date().toISOString();
+      client.messages.push({ content: msgContent, sender: 'server', timestamp });
 
       if (state.currentRoute === 'detail' && state.currentClientId === clientId) {
-        addNewMessageWithAnimation({ content: msgContent, sender: 'server' });
+        addNewMessageWithAnimation({ content: msgContent, sender: 'server', timestamp });
       }
     }
   }
@@ -365,6 +367,15 @@ function formatDateTime(isoString) {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatMessageTime(isoString) {
+  const date = new Date(isoString);
+  return date.toLocaleString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -500,8 +511,13 @@ function renderClientDetail() {
 
   const messageItems = client.messages
     .map((msg, index) => {
-      const senderClass = msg.sender === 'server' ? 'message-bubble--server' : 'message-bubble--client';
-      return `<div class="message-bubble ${senderClass}" style="animation-delay: ${index * 0.03}s">${escapeHtml(msg.content)}</div>`;
+      const senderClass = msg.sender === 'server' ? 'message-wrapper--server' : 'message-wrapper--client';
+      const bubbleClass = msg.sender === 'server' ? 'message-bubble--server' : 'message-bubble--client';
+      const timeStr = msg.timestamp ? formatMessageTime(msg.timestamp) : '';
+      return `<div class="message-wrapper ${senderClass}" style="animation-delay: ${index * 0.03}s">
+        <div class="message-bubble ${bubbleClass}">${escapeHtml(msg.content)}</div>
+        <div class="message-bubble-time">${timeStr}</div>
+      </div>`;
     })
     .join('');
   const uploadStatus = state.uploadStatus.clientId === client.id ? state.uploadStatus : null;
@@ -727,13 +743,25 @@ function addNewMessageWithAnimation(msg) {
     emptyState.remove();
   }
 
-  const messageItem = document.createElement('div');
-  const senderClass = msg.sender === 'server' ? 'message-bubble--server' : 'message-bubble--client';
-  messageItem.className = `message-bubble ${senderClass}`;
-  messageItem.textContent = msg.content;
-  messageItem.style.animation = 'messageSlideIn 0.3s ease';
+  const wrapperClass = msg.sender === 'server' ? 'message-wrapper--server' : 'message-wrapper--client';
+  const bubbleClass = msg.sender === 'server' ? 'message-bubble--server' : 'message-bubble--client';
 
-  messageList.appendChild(messageItem);
+  const wrapper = document.createElement('div');
+  wrapper.className = `message-wrapper ${wrapperClass}`;
+  wrapper.style.animation = 'messageSlideIn 0.3s ease';
+
+  const bubble = document.createElement('div');
+  bubble.className = `message-bubble ${bubbleClass}`;
+  bubble.textContent = msg.content;
+
+  const timeDiv = document.createElement('div');
+  timeDiv.className = 'message-bubble-time';
+  timeDiv.textContent = msg.timestamp ? formatMessageTime(msg.timestamp) : '';
+
+  wrapper.appendChild(bubble);
+  wrapper.appendChild(timeDiv);
+
+  messageList.appendChild(wrapper);
   messageList.scrollTop = messageList.scrollHeight;
 }
 

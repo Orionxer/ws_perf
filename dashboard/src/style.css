@@ -651,7 +651,7 @@ body::after {
   padding: var(--space-lg);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
-  max-height: calc(var(--vh, 1vh) * 100 - 400px);
+  height: 300px;
   overflow-y: auto;
   position: relative;
 }
@@ -718,6 +718,21 @@ body::after {
 }
 
 /* Message Bubbles */
+.message-wrapper {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+  clear: both;
+}
+
+.message-wrapper--client {
+  align-items: flex-start;
+}
+
+.message-wrapper--server {
+  align-items: flex-end;
+}
+
 .message-bubble {
   display: inline-block;
   max-width: 75%;
@@ -726,31 +741,28 @@ body::after {
   font-family: var(--font-body);
   font-size: 13px;
   line-height: 1.5;
-  position: relative;
   word-wrap: break-word;
   box-shadow: var(--shadow-sm);
-  animation: messageSlideIn 0.3s ease;
-  margin-bottom: 8px;
-  clear: both;
 }
 
 .message-bubble--client {
-  float: left;
   background: rgba(0, 212, 255, 0.1);
   border: 1px solid rgba(0, 212, 255, 0.3);
   color: var(--text-primary);
   border-bottom-left-radius: 2px;
-  margin-right: auto;
 }
 
 .message-bubble--server {
-  float: right;
   background: rgba(0, 255, 136, 0.1);
   border: 1px solid rgba(0, 255, 136, 0.3);
   color: var(--text-primary);
   border-bottom-right-radius: 2px;
-  text-align: right;
-  margin-left: auto;
+}
+
+.message-bubble-time {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
 }
 
 /* Chat Input Area */
@@ -1122,7 +1134,7 @@ body::after {
   /* Message list adjustments */
   .message-list {
     padding: var(--space-md);
-    max-height: calc(var(--vh, 1vh) * 100 - 450px);
+    height: 250px;
   }
 
   /* Video card adjustments */
@@ -1184,7 +1196,7 @@ body::after {
   }
 
   .message-list {
-    max-height: calc(var(--vh, 1vh) * 100 - 380px);
+    height: 200px;
   }
 
   .upload-status-title {

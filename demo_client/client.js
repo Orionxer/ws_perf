@@ -4,8 +4,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 // const WS_URL = 'ws://gogo.uno:1885';
-const WS_URL = 'wss://gogo.uno:1886';
-// const WS_URL = 'ws://localhost:8080';
+// const WS_URL = 'wss://gogo.uno:1886';
+const WS_URL = 'ws://localhost:1885';
 const VIDEO_FILE_PATH = path.join(__dirname, 'resource', 'starship.mp4');
 
 const ws = new WebSocket(WS_URL);
